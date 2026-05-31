@@ -1,0 +1,9 @@
+{
+  "name": "Big Bros White Sand",
+  "short_name": "Big Bros",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf6ef",
+  "theme_color": "#0e7c86",
+  "icons": []
+}
