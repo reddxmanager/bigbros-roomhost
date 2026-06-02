@@ -1,12 +1,19 @@
 import { GuestInput } from './components/GuestInput'
 import { Dashboard } from './components/Dashboard'
+import { Tablet } from './components/Tablet'
 
 export default function App() {
+  // Tiny path switch, no router dependency. /tablet is the warm guest surface,
+  // everything else is the calm staff dashboard. The dashboard is untouched.
+  if (window.location.pathname.startsWith('/tablet')) {
+    return <Tablet />
+  }
+
   return (
-    <div style={{ fontFamily: 'system-ui, sans-serif' }}>
-      <header style={{ padding: '12px 16px', borderBottom: '1px solid #ccc' }}>
-        <strong>Big Bros White Sand</strong>
-        <span style={{ color: '#888' }}> &middot; Voice Agent Skeleton (mocked)</span>
+    <div>
+      <header className="app-header">
+        <span className="brand">Big Bros White Sand</span>
+        <span className="sub">Staff Dashboard</span>
       </header>
       <GuestInput />
       <Dashboard />

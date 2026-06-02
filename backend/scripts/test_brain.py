@@ -39,7 +39,7 @@ load_dotenv(BACKEND_DIR / ".env")
 if not os.environ.get("ANTHROPIC_API_KEY"):
     print(
         "ANTHROPIC_API_KEY is not set. "
-        "Set ANTHROPIC_API_KEY in backend/.env (gitignored — see backend/.env.example) "
+        "Set ANTHROPIC_API_KEY in backend/.env (gitignored, see backend/.env.example) "
         "and re-run.",
         file=sys.stderr,
     )

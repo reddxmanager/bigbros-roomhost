@@ -1,0 +1,580 @@
+/* Big Bros White Sand. Tropical-modern, back-of-house register.
+   Palette translated from resort materials, not literal textures:
+   warm sand and cream surfaces, white cards, ocean teal as the single
+   confident accent, warm coral reserved for human and safety touches.
+   No neon, no glow. Motion budget is near-zero: one ticket-lands transition,
+   reused everywhere, and nothing else. */
+
+:root {
+  --sand: #f7f1e7;
+  --lane: #efe7d8;
+  --surface: #ffffff;
+  --line: #e4dccd;
+  --ink: #2c2620;
+  --muted: #8a8073;
+  --teal: #0e7c86;
+  --teal-deep: #0a5d65;
+  --teal-soft: #e3f0f1;
+  --coral: #c9573d;
+  --coral-soft: #f6e3dd;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(44, 38, 32, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--sand);
+  color: var(--ink);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Header */
+.app-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.app-header .brand {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.app-header .sub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* Guest input strip */
+.guest-input {
+  padding: 16px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.guest-input .row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.guest-input label {
+  font-size: 13px;
+  color: var(--muted);
+}
+.guest-input select,
+.guest-input textarea {
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--sand);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.guest-input textarea {
+  width: 100%;
+  resize: vertical;
+}
+.guest-input .send {
+  background: var(--teal);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.guest-input .send:disabled {
+  background: var(--muted);
+  cursor: default;
+}
+.guest-input .reply {
+  color: var(--teal-deep);
+  font-size: 14px;
+}
+
+/* Dashboard board */
+.board {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+  padding: 18px 20px;
+  align-items: start;
+}
+.lane {
+  background: var(--lane);
+  border-radius: var(--radius);
+  padding: 10px;
+  min-height: 220px;
+}
+.lane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 4px 12px;
+  color: var(--teal-deep);
+}
+.lane-head .title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.lane-head .count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 1px 9px;
+}
+.lane-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 4px;
+}
+
+/* Ticket card */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 11px;
+  margin-bottom: 10px;
+  box-shadow: var(--shadow);
+  animation: ticket-lands 320ms ease-out both;
+}
+.card.prio-urgent {
+  border-left-color: var(--coral);
+}
+.card.prio-high {
+  border-left-color: var(--teal);
+}
+.card.status-done {
+  opacity: 0.55;
+}
+.card.status-cancelled {
+  opacity: 0.5;
+}
+.card.status-cancelled .summary {
+  text-decoration: line-through;
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.card-top .dept-icon {
+  color: var(--teal-deep);
+  flex: none;
+}
+.card-top .summary {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.25;
+}
+.card-top .prio-flag {
+  margin-left: auto;
+  flex: none;
+}
+.card-top .prio-flag.urgent {
+  color: var(--coral);
+}
+.card-top .prio-flag.high {
+  color: var(--teal);
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  border-radius: 20px;
+  padding: 2px 8px;
+  background: var(--sand);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.chip.allergy {
+  background: var(--coral-soft);
+  color: var(--coral);
+  border-color: transparent;
+  font-weight: 600;
+}
+.chip.repeat {
+  background: var(--teal-soft);
+  color: var(--teal-deep);
+  border-color: transparent;
+  font-weight: 600;
+}
+.chip.escalation {
+  background: var(--coral-soft);
+  color: var(--coral);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.utterance {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  margin-top: 8px;
+  line-height: 1.35;
+}
+
+.card-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.status-pill.ack {
+  color: var(--teal-deep);
+}
+.status-pill.done {
+  color: var(--teal-deep);
+}
+.advance {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--teal-soft);
+  color: var(--teal-deep);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.advance:hover {
+  background: var(--teal);
+  color: #fff;
+}
+
+@keyframes ticket-lands {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Motion budget is near-zero and accessibility-first: when the guest or staff
+   member prefers reduced motion, the ticket-lands transition and every other
+   animation are switched off entirely. */
+/* -----------------------------------------------------------------------------
+   Guest tablet. The warm register: same family as the dashboard, pushed warmer.
+   Teak and sand surface panels, ocean teal for the live signal, warm coral for
+   the human touches (the allergy-safe note). Same near-zero motion budget: the
+   speaking-dots pulse and the live blink, nothing else.
+   -------------------------------------------------------------------------- */
+.tablet {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(120% 90% at 50% 0%, #fbf6ec 0%, #f1e7d6 60%, #e7dac3 100%);
+  color: var(--ink);
+}
+.tablet-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 18px 26px;
+  border-bottom: 1px solid var(--line);
+}
+.tablet-header .brand {
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.2px;
+}
+.tablet-header .suite {
+  color: var(--teal-deep);
+  font-size: 14px;
+  font-weight: 600;
+}
+.tablet-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr);
+  gap: 24px;
+  padding: 24px 26px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .tablet-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.avatar-tile {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    linear-gradient(160deg, #16707a 0%, #0a5d65 100%);
+  border: 1px solid rgba(44, 38, 32, 0.08);
+  box-shadow: 0 8px 24px rgba(44, 38, 32, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.avatar-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.avatar-still {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.live-dot {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--teal-deep);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  border-radius: 20px;
+  padding: 4px 10px;
+}
+.live-dot .blink {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--coral);
+  animation: blink 2.4s ease-in-out infinite;
+}
+.wake {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--teal-deep);
+  border: none;
+  border-radius: 12px;
+  padding: 14px 22px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wake-note {
+  color: #fff;
+  font-size: 15px;
+  opacity: 0.9;
+}
+.speaking-dots {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  gap: 6px;
+}
+.speaking-dots span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.95);
+  animation: speak-pulse 1.1s ease-in-out infinite;
+}
+.speaking-dots span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.speaking-dots span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+.tablet-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.caption {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+  font-size: 20px;
+  line-height: 1.4;
+  font-weight: 500;
+  box-shadow: var(--shadow);
+}
+.caption-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.info-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--teal-deep);
+  font-size: 16px;
+  background: var(--teal-soft);
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+.receipts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.receipt {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--teal);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+  animation: ticket-lands 320ms ease-out both;
+}
+.receipt-icon {
+  color: var(--teal-deep);
+  flex: none;
+  margin-top: 1px;
+}
+.receipt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.receipt-summary {
+  font-weight: 600;
+  font-size: 16px;
+}
+.receipt-sub {
+  font-size: 13px;
+  color: var(--muted);
+}
+.receipt-allergy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--coral);
+  background: var(--coral-soft);
+  border-radius: 20px;
+  padding: 3px 9px;
+  width: fit-content;
+}
+
+.tablet-input {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+.tablet-input textarea {
+  font-family: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+.ask {
+  align-self: flex-start;
+  background: var(--teal);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 26px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ask:disabled {
+  background: var(--muted);
+  cursor: default;
+}
+.tablet-error {
+  color: var(--coral);
+  font-size: 14px;
+}
+
+.listening-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--muted);
+  font-size: 14px;
+  border-top: 1px solid var(--line);
+}
+
+@keyframes blink {
+  0%, 45%, 100% { opacity: 1; }
+  50%, 55% { opacity: 0.25; }
+}
+@keyframes speak-pulse {
+  0%, 100% { transform: scale(0.7); opacity: 0.5; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+/* Motion budget is near-zero and accessibility-first: when the guest or staff
+   member prefers reduced motion, the ticket-lands transition, the speaking-dots
+   pulse, the live blink, and every other animation are switched off entirely. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  .card {
+    animation: none !important;
+    transition: none !important;
+  }
+}

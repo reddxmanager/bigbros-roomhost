@@ -19,6 +19,14 @@ export interface Ticket {
   source_utterance: string
 }
 
+export interface RoomState {
+  room: string
+  suite_name: string
+  language: string
+  standing_tags: string[]
+  open_requests: Ticket[]
+}
+
 export type WsMessage =
   | { type: 'snapshot'; tickets: Ticket[] }
   | { type: 'ticket.created'; ticket: Ticket }

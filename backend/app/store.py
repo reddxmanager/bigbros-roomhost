@@ -42,6 +42,17 @@ class Store:
             if r is not None:
                 r.open_requests.append(t)
 
+    async def set_status(self, ticket_id: str, status: str) -> Optional[Ticket]:
+        """Flip a ticket's status in place. The same Ticket object lives in both
+        self.tickets and the room's open_requests, so one mutation updates both.
+        Returns the updated ticket, or None if the id is unknown."""
+        async with self._lock:
+            t = self.tickets.get(ticket_id)
+            if t is None:
+                return None
+            t.status = status
+            return t
+
     async def subscribe(self, ws: WebSocket) -> None:
         self.subscribers.add(ws)
 

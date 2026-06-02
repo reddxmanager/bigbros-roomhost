@@ -80,6 +80,11 @@ class BrainResult(BaseModel):
     cancellations: list[Cancellation] = Field(default_factory=list)
 
 
+class StatusUpdate(BaseModel):
+    """Body for POST /tickets/{id}/status. Server-authoritative status flip."""
+    status: Status
+
+
 class TurnRequest(BaseModel):
     room: str
     text: str
