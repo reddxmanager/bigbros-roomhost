@@ -49,12 +49,35 @@ class RoomState(BaseModel):
     open_requests: list[Ticket] = Field(default_factory=list)
 
 
+class Clarification(BaseModel):
+    """request_clarification tool output: ask the guest one focused question."""
+    field: str
+    question: str
+
+
+class Escalation(BaseModel):
+    """escalate tool output: route to a human manager. Never auto-promises a fix."""
+    reason: str
+    guest_message: str
+
+
+class Cancellation(BaseModel):
+    """cancel_request tool output: cancel a previously created ticket for this room."""
+    ticket_ref: str
+    guest_message: str
+
+
 class BrainResult(BaseModel):
-    """One Claude turn produces tickets to create and a spoken reply.
-    Step 2 will extend this with clarification / escalation / cancellation outcomes."""
+    """One Claude turn's output, decomposed by tool. The pipeline applies these
+    against the store: tickets become Ticket rows (with dedup + allergy autotag),
+    escalations become urgent frontdesk tickets, cancellations mark matched
+    tickets as status=cancelled. reply is the spoken text for the avatar."""
 
     tickets: list[TicketDraft] = Field(default_factory=list)
     reply: str = ""
+    clarifications: list[Clarification] = Field(default_factory=list)
+    escalations: list[Escalation] = Field(default_factory=list)
+    cancellations: list[Cancellation] = Field(default_factory=list)
 
 
 class TurnRequest(BaseModel):
