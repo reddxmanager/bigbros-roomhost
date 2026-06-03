@@ -146,10 +146,32 @@ class Pipeline:
                 "reason": "cancelled",
             })
 
+        sentiment = self._derive_sentiment(result, finalized)
+
         audio = await self.tts.speak(result.reply, effective_language)
         await self.avatar.render(audio)
 
-        return TurnResponse(reply=result.reply, tickets=finalized, language=effective_language)
+        return TurnResponse(
+            reply=result.reply,
+            tickets=finalized,
+            language=effective_language,
+            sentiment=sentiment,
+        )
+
+    @staticmethod
+    def _derive_sentiment(result: BrainResult, finalized: list[Ticket]) -> str:
+        """A reactive-face signal read off the brain's already-decided output, no
+        second model call. Concern wins over warm so a complaint inside a mixed
+        sentence still reads as apology. Anything else stays neutral."""
+        has_escalation = bool(result.escalations) or any(
+            "escalation" in t.tags for t in finalized
+        )
+        depts = {t.dept for t in finalized}
+        if has_escalation or "maintenance" in depts:
+            return "concern"
+        if depts & {"kitchen", "bar"}:
+            return "warm"
+        return "neutral"
 
     def _find_dup(self, room_state, draft: TicketDraft, now: datetime) -> Optional[Ticket]:
         for t in room_state.open_requests:

@@ -114,7 +114,13 @@ export async function tabletTurn(
   room: string,
   text: string,
   language: string,
-): Promise<{ reply: string; tickets: Ticket[]; language: string; spoken: boolean }> {
+): Promise<{
+  reply: string
+  tickets: Ticket[]
+  language: string
+  spoken: boolean
+  sentiment: string
+}> {
   console.log('[did] iceConnectionState before turn:', handle.pc.iceConnectionState)
   const res = await fetch('/tablet/turn', {
     method: 'POST',

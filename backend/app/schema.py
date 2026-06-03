@@ -94,3 +94,8 @@ class TurnResponse(BaseModel):
     reply: str
     tickets: list[Ticket]
     language: str
+    # Cheap reactive-face signal derived from what the brain already decided
+    # (no second model call): concern for problems/escalations, warm for happy
+    # errands, neutral otherwise. Drives a subtle tablet tint. Defaults neutral
+    # so a missing signal never breaks the reply.
+    sentiment: str = "neutral"

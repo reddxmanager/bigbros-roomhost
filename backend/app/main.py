@@ -133,6 +133,8 @@ class TabletTurnResponse(BaseModel):
     tickets: list[Ticket]
     language: str
     spoken: bool
+    # Reactive-face signal (concern | warm | neutral) for the tablet tint cue.
+    sentiment: str = "neutral"
 
 
 @app.get("/health")
@@ -249,7 +251,11 @@ async def tablet_turn(body: TabletTurn) -> TabletTurnResponse:
     audio = await get_tts().speak(resp.reply, resp.language)
     spoken = await _speak_on_stream(body.stream_id, body.session_id, audio)
     return TabletTurnResponse(
-        reply=resp.reply, tickets=resp.tickets, language=resp.language, spoken=spoken
+        reply=resp.reply,
+        tickets=resp.tickets,
+        language=resp.language,
+        spoken=spoken,
+        sentiment=resp.sentiment,
     )
 
 

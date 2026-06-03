@@ -572,6 +572,24 @@ body {
 .stage-speech {
   padding: 2px 8px 2px;
 }
+/* Reactive-face cue: a soft wash + edge accent on the caption, calm teal for
+   concern, warm coral for a happy errand. Color only, no movement. The fade is
+   a color transition (disabled under the shared reduced-motion guard). */
+.stage-speech.tone-concern,
+.stage-speech.tone-warm {
+  padding: 13px 15px;
+  border-radius: 12px;
+  border-left: 3px solid transparent;
+  transition: background-color 240ms ease, border-color 240ms ease;
+}
+.stage-speech.tone-concern {
+  background: var(--teal-soft);
+  border-left-color: var(--teal);
+}
+.stage-speech.tone-warm {
+  background: var(--coral-soft);
+  border-left-color: var(--coral);
+}
 .caption {
   margin: 0;
   font-family: var(--display);

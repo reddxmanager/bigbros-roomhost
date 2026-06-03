@@ -108,6 +108,9 @@ export function Tablet() {
   const [caption, setCaption] = useState('')
   const [receipts, setReceipts] = useState<Ticket[]>([])
   const [infoLine, setInfoLine] = useState('')
+  // Reactive-face cue from the brain's decision: a soft warm/cool tint on the
+  // caption. Defaults neutral (no tint) so a missing signal never breaks the UI.
+  const [sentiment, setSentiment] = useState<'concern' | 'warm' | 'neutral'>('neutral')
   const [error, setError] = useState('')
   // The presenter image, for the static-face fallback.
   const [sourceUrl, setSourceUrl] = useState('')
@@ -310,6 +313,7 @@ export function Tablet() {
     setCaption('')
     setReceipts([])
     setInfoLine('')
+    setSentiment('neutral')
     try {
       // Arm the photo->live swap: from here the next presenter frame is a real
       // speak (the ack), not the idle warmup, so it is safe to reveal the video.
@@ -333,6 +337,9 @@ export function Tablet() {
         setCaption(result.reply)
         setReceipts(result.tickets)
       }
+      // Reactive-face cue. Defaults neutral if the field is absent.
+      const s = result.sentiment
+      setSentiment(s === 'concern' || s === 'warm' ? s : 'neutral')
 
       // If the stream was stale at speak time, re-handshake and voice the same
       // reply once more without re-running the brain.
@@ -420,7 +427,11 @@ export function Tablet() {
             )}
           </div>
 
-          <div className="stage-speech">
+          <div
+            className={`stage-speech${
+              caption && sentiment !== 'neutral' ? ` tone-${sentiment}` : ''
+            }`}
+          >
             {caption && <p className="caption">{caption}</p>}
             {infoLine && (
               <p className="info-line">
