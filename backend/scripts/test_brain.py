@@ -174,8 +174,17 @@ async def case_1_canonical(pipeline, brain) -> tuple[bool, list[str]]:
     kitchen = [t for t in trace.new_tickets if t["dept"] == "kitchen"]
     if kitchen and "allergy:shellfish" not in kitchen[0]["tags"]:
         fails.append("kitchen ticket missing allergy:shellfish tag")
-    if "breakfast" not in trace.reply.lower() and "7" not in trace.reply:
-        fails.append("breakfast not answered in reply")
+    # Breakfast must be answered in place. Room 4 replies in Korean, so accept
+    # the breakfast word in either language, and require the grounded 6 AM start
+    # from RESORT FACTS. The old 7-10 hallucination would now fail this, on
+    # purpose: this assertion guards the grounding, it does not assume English.
+    reply = trace.reply
+    breakfast_mentioned = any(w in reply.lower() for w in ("breakfast",)) or any(
+        w in reply for w in ("조식", "아침")
+    )
+    breakfast_grounded = "6" in reply
+    if not (breakfast_mentioned and breakfast_grounded):
+        fails.append("breakfast not answered with the grounded 6 to 10 from RESORT FACTS")
     return (not fails, fails)
 
 
