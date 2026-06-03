@@ -34,7 +34,13 @@ class Pipeline:
         self.tts = tts
         self.avatar = avatar
 
-    async def run_turn(self, room: str, text: str, guest_session_id: str) -> TurnResponse:
+    async def run_turn(
+        self,
+        room: str,
+        text: str,
+        guest_session_id: str,
+        language: Optional[str] = None,
+    ) -> TurnResponse:
         room_state = store.get_room(room)
         if room_state is None:
             return TurnResponse(
@@ -43,11 +49,23 @@ class Pipeline:
                 language="en",
             )
 
-        transcript, language = await self.stt.transcribe(text)
-        if language == "und":
-            language = room_state.language
+        transcript, detected = await self.stt.transcribe(text)
+        # Effective reply language. An explicit override (the demo language
+        # control, standing in for Scribe's detected-language tag on the typed
+        # path) wins; then the real Scribe tag; then the room's standing
+        # language. This drives the spoken reply and TTS voice only. Ticket
+        # summaries stay English, enforced by the brain prompt and unaffected here.
+        if language:
+            effective_language = language
+        elif detected != "und":
+            effective_language = detected
+        else:
+            effective_language = room_state.language
 
-        result: BrainResult = await self.brain.decide(transcript, room_state)
+        # Feed the brain the effective language without mutating stored room
+        # state, so the reply text comes back in the right language per turn.
+        brain_context = room_state.model_copy(update={"language": effective_language})
+        result: BrainResult = await self.brain.decide(transcript, brain_context)
 
         finalized: list[Ticket] = []
         now = datetime.now(timezone.utc)
@@ -128,10 +146,10 @@ class Pipeline:
                 "reason": "cancelled",
             })
 
-        audio = await self.tts.speak(result.reply, language)
+        audio = await self.tts.speak(result.reply, effective_language)
         await self.avatar.render(audio)
 
-        return TurnResponse(reply=result.reply, tickets=finalized, language=language)
+        return TurnResponse(reply=result.reply, tickets=finalized, language=effective_language)
 
     def _find_dup(self, room_state, draft: TicketDraft, now: datetime) -> Optional[Ticket]:
         for t in room_state.open_requests:
