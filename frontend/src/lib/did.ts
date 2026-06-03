@@ -55,7 +55,6 @@ export async function connectAvatar(
       }
     }
     pc.addEventListener('iceconnectionstatechange', () => {
-      console.log('[did] iceConnectionState:', pc.iceConnectionState)
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
         finish()
       }
@@ -94,12 +93,21 @@ export async function closeStream(handle: StreamHandle): Promise<void> {
   }
 }
 
+export async function tabletListen(
+  blob: Blob,
+): Promise<{ text: string; language: string }> {
+  const form = new FormData()
+  form.append('clip', blob, 'clip.webm')
+  const res = await fetch('/tablet/listen', { method: 'POST', body: form })
+  if (!res.ok) throw new Error(`listen failed: ${res.status}`)
+  return res.json()
+}
+
 export async function tabletAck(
   handle: StreamHandle,
   room: string,
   language: string,
 ): Promise<{ spoken: boolean }> {
-  console.log('[did] iceConnectionState before ack:', handle.pc.iceConnectionState)
   const res = await fetch('/tablet/ack', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -121,7 +129,6 @@ export async function tabletTurn(
   spoken: boolean
   sentiment: string
 }> {
-  console.log('[did] iceConnectionState before turn:', handle.pc.iceConnectionState)
   const res = await fetch('/tablet/turn', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -142,7 +149,6 @@ export async function tabletSpeak(
   text: string,
   language: string,
 ): Promise<{ spoken: boolean }> {
-  console.log('[did] iceConnectionState before speak:', handle.pc.iceConnectionState)
   const res = await fetch('/tablet/speak', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

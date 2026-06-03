@@ -10,6 +10,7 @@ import {
   Translate,
   HandWaving,
   Info,
+  Microphone,
 } from '@phosphor-icons/react'
 import type { Dept, RoomState, Ticket } from '../lib/types'
 import {
@@ -18,20 +19,9 @@ import {
   tabletAck,
   tabletTurn,
   tabletSpeak,
+  tabletListen,
   type StreamHandle,
 } from '../lib/did'
-
-// TEMP wake-render audit logging. Timestamps are ms since page load, so the
-// console shows the exact ordering of overlay mount/onload, frame detection,
-// and the photo-to-live swap. Strip in the cleanup pass.
-function wlog(msg: string, extra?: unknown) {
-  const t = Math.round(performance.now())
-  if (extra === undefined) console.log(`[wake +${t}ms] ${msg}`)
-  else console.log(`[wake +${t}ms] ${msg}`, extra)
-}
-
-const CANONICAL =
-  "Hey, the aircon in our room's not really cooling, and can we get two more San Migs and some extra rice? Oh, what time's breakfast?"
 
 const DEPT_ICON: Record<Dept, typeof ForkKnife> = {
   kitchen: ForkKnife,
@@ -61,6 +51,23 @@ type Lang = 'en' | 'ko'
 function langFromUrl(): Lang {
   return new URLSearchParams(window.location.search).get('lang') === 'ko' ? 'ko' : 'en'
 }
+
+// Model A states. idle = asleep, connecting = handshake, greeting = the host's
+// opening speak, live = awake with the mic CLOSED (tap to speak), thinking =
+// processing one turn. The mic is open only during a recording, which is a
+// separate boolean, never a resting state.
+type Status = 'idle' | 'connecting' | 'greeting' | 'live' | 'thinking'
+
+// The host's opening line on wake. Default English; the guest's detected
+// language takes over once they speak. No em dashes.
+const GREETING: Record<Lang, string> = {
+  en: 'Hi there, how can I help you?',
+  ko: '안녕하세요, 무엇을 도와드릴까요?',
+}
+
+// Return to the asleep resting state after this long with no interaction.
+// Silence is the dismissal; there is no voice goodbye command.
+const IDLE_MS = 45000
 
 function Receipt({ t }: { t: Ticket }) {
   const Icon = DEPT_ICON[t.dept]
@@ -100,11 +107,22 @@ export function Tablet() {
   // host photo gets pulled onto a blank frame. We swap on the first frame that
   // arrives after a speak is initiated, which is the actual presenter.
   const swapArmedRef = useRef(false)
+  // Push-to-talk capture. The mic is opened only inside startRecording and the
+  // tracks are stopped the instant recording ends, so the mic is never live
+  // outside a deliberate tap. Privacy by design (one suite is a honeymoon suite).
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const rafRef = useRef<number | null>(null)
+  // Idle-to-sleep timer. Runs only while awake (live, mic closed).
+  const idleTimerRef = useRef<number | null>(null)
 
   const [suite, setSuite] = useState('')
   const [language, setLanguage] = useState<Lang>(langFromUrl)
-  const [status, setStatus] = useState<'idle' | 'connecting' | 'live' | 'thinking'>('idle')
-  const [text, setText] = useState(CANONICAL)
+  const [recording, setRecording] = useState(false)
+  const [status, setStatus] = useState<Status>('idle')
+  const [text, setText] = useState('')
   const [caption, setCaption] = useState('')
   const [receipts, setReceipts] = useState<Ticket[]>([])
   const [infoLine, setInfoLine] = useState('')
@@ -129,27 +147,12 @@ export function Tablet() {
     // The track event can fire more than once for the same stream (audio +
     // video tracks both carry it). Bind, and register the frame callback, once
     // per stream. Re-assigning srcObject is what aborted the prior play().
-    if (boundStreamIdRef.current === stream.id) {
-      wlog('bindTrack: duplicate event for same stream, skipping', { streamId: stream.id })
-      return
-    }
+    if (boundStreamIdRef.current === stream.id) return
     boundStreamIdRef.current = stream.id
     v.srcObject = stream
-    const vtracks = stream.getVideoTracks().map((t) => ({
-      id: t.id,
-      muted: t.muted,
-      readyState: t.readyState,
-    }))
-    wlog('bindTrack: srcObject set', { streamId: stream.id, videoTracks: vtracks })
     // play() can reject with AbortError if a load interrupts it. That race is
     // benign and self-heals, so swallow it rather than surfacing an error.
-    v.play().then(
-      () => wlog('video.play() resolved'),
-      (e: DOMException) => {
-        if (e?.name === 'AbortError') wlog('video.play() AbortError (benign, ignored)')
-        else wlog('video.play() rejected', String(e))
-      },
-    )
+    v.play().catch(() => {})
     // Swap to live video only on the first frame that arrives AFTER a speak is
     // requested. D-ID's idle/warmup frame is a real presented frame but a blank
     // placeholder, not the presenter, so we ignore frames until the swap is
@@ -160,27 +163,10 @@ export function Tablet() {
       ) => number
     }
     if (typeof vv.requestVideoFrameCallback === 'function') {
-      wlog('registering requestVideoFrameCallback')
-      let ignored = 0
-      const onFrame = (_now: number, meta: Record<string, number>) => {
+      const onFrame = () => {
         if (swapArmedRef.current) {
-          wlog('rVFC frame after speak -> setFrameLive(true)', {
-            width: meta?.width,
-            height: meta?.height,
-            mediaTime: meta?.mediaTime,
-            presentedFrames: meta?.presentedFrames,
-            ignoredWarmupFrames: ignored,
-          })
           setFrameLive(true)
           return
-        }
-        ignored += 1
-        if (ignored === 1) {
-          wlog('rVFC idle/warmup frame ignored (no speak yet)', {
-            width: meta?.width,
-            height: meta?.height,
-            presentedFrames: meta?.presentedFrames,
-          })
         }
         vv.requestVideoFrameCallback(onFrame)
       }
@@ -188,44 +174,14 @@ export function Tablet() {
     } else {
       // Fallback: timeupdate fires as playback advances. Gate it the same way,
       // so the swap still waits for a post-speak frame.
-      wlog('rVFC unsupported -> using timeupdate fallback')
       const onTime = () => {
         if (!swapArmedRef.current) return
-        wlog('timeupdate after speak -> setFrameLive(true)', {
-          readyState: v.readyState,
-          videoWidth: v.videoWidth,
-          currentTime: v.currentTime,
-        })
         setFrameLive(true)
         v.removeEventListener('timeupdate', onTime)
       }
       v.addEventListener('timeupdate', onTime)
     }
   }
-
-  // TEMP wake-render audit. Log each flag flip and the overlay show/hide, with
-  // the video's frame state at the moment the overlay is pulled, so we can see
-  // whether the swap fires before a real frame exists. Strip in cleanup.
-  const overlayVisible = status !== 'idle' && !!sourceUrl && !frameLive
-  useEffect(() => {
-    wlog(`frameLive -> ${frameLive}`)
-  }, [frameLive])
-  useEffect(() => {
-    wlog(`stillLoaded -> ${stillLoaded}`)
-  }, [stillLoaded])
-  useEffect(() => {
-    wlog(`faceVisible -> ${faceVisible}`)
-  }, [faceVisible])
-  useEffect(() => {
-    const v = videoRef.current
-    wlog(`overlay visible = ${overlayVisible}; video underneath`, {
-      readyState: v?.readyState,
-      videoWidth: v?.videoWidth,
-      videoHeight: v?.videoHeight,
-      currentTime: v?.currentTime,
-      paused: v?.paused,
-    })
-  }, [overlayVisible])
 
   useEffect(() => {
     fetch('/rooms')
@@ -259,17 +215,38 @@ export function Tablet() {
     return () => {
       window.removeEventListener('beforeunload', onUnload)
       if (handleRef.current) closeStream(handleRef.current)
+      // Never leave the mic open or a sleep timer pending on unmount.
+      stopMicTracks()
+      clearIdleTimer()
     }
   }, [])
+
+  function clearIdleTimer() {
+    if (idleTimerRef.current !== null) {
+      clearTimeout(idleTimerRef.current)
+      idleTimerRef.current = null
+    }
+  }
+  function startIdleTimer() {
+    clearIdleTimer()
+    idleTimerRef.current = window.setTimeout(() => sleep(), IDLE_MS)
+  }
+  function bumpIdle() {
+    if (status === 'live' && !recording) startIdleTimer()
+  }
 
   async function wake() {
     if (status !== 'idle') return
     setStatus('connecting')
     setError('')
+    setCaption('')
+    setReceipts([])
+    setInfoLine('')
+    setSentiment('neutral')
     setFrameLive(false)
     setStillLoaded(false)
     // Fresh session: nothing bound yet, and the swap stays disarmed until the
-    // guest's first speak so the warmup frame cannot pull the photo.
+    // greeting (the first speak) so the warmup frame cannot pull the photo.
     boundStreamIdRef.current = null
     swapArmedRef.current = false
     try {
@@ -281,11 +258,52 @@ export function Tablet() {
       const handle = await connectAvatar(bindTrack)
       handleRef.current = handle
       setSourceUrl(handle.sourceUrl)
-      setStatus('live')
+      // The host greets first. The mic stays CLOSED; it only opens later on a
+      // deliberate tap. The greeting is also the first speak, so it drives the
+      // photo->presenter swap and covers the connect with no silent stare.
+      await greet(handle)
     } catch (err) {
       setError(`Could not reach the avatar. ${String(err)}`)
       setStatus('idle')
     }
+  }
+
+  // Speak the opening line. This is the first presenter speak, so it arms and
+  // performs the photo->presenter swap exactly like a turn's ack does.
+  async function greet(handle: StreamHandle): Promise<void> {
+    setStatus('greeting')
+    swapArmedRef.current = true
+    let h = handle
+    const r = await tabletSpeak(h, GREETING[language], language)
+    if (!r.spoken) {
+      // Stream went stale before the greeting (rare on a fresh stream): one
+      // re-handshake and retry, mirroring the turn stale-session recovery.
+      h = await reconnect()
+      swapArmedRef.current = true
+      await tabletSpeak(h, GREETING[language], language).catch(() => {})
+    }
+    setStatus('live')
+    startIdleTimer()
+  }
+
+  // Idle dismissal: return to the fully asleep resting state. The stream is
+  // closed (mic was already closed), so nothing listens until the next wake.
+  function sleep() {
+    clearIdleTimer()
+    stopMicTracks()
+    if (handleRef.current) {
+      closeStream(handleRef.current)
+      handleRef.current = null
+    }
+    boundStreamIdRef.current = null
+    swapArmedRef.current = false
+    setRecording(false)
+    setFrameLive(false)
+    setCaption('')
+    setReceipts([])
+    setInfoLine('')
+    setSentiment('neutral')
+    setStatus('idle')
   }
 
   // Re-handshake a fresh, connected stream. Used to recover from a stale session.
@@ -305,9 +323,63 @@ export function Tablet() {
     return handle
   }
 
+  // Latency-mask ack, with the stale-session recovery preserved exactly from the
+  // original send(). Returns the (possibly re-handshaked) handle. Split out so
+  // the voice path can fire the ack the instant the clip is sent, covering the
+  // Scribe round-trip as well as brain + TTS.
+  async function fireAck(handle: StreamHandle): Promise<StreamHandle> {
+    // Arm the photo->live swap: from here the next presenter frame is a real
+    // speak (the ack), not the idle warmup, so it is safe to reveal the video.
+    swapArmedRef.current = true
+    // The ack is best effort. If the session went stale, re-handshake once and
+    // retry, but never block the real turn on the ack.
+    const ack = await tabletAck(handle, room, language)
+    if (!ack.spoken) {
+      handle = await reconnect()
+      swapArmedRef.current = true
+      await tabletAck(handle, room, language).catch(() => {})
+    }
+    return handle
+  }
+
+  // The brain turn: route, surface tickets/caption/sentiment, and re-speak on a
+  // stale stream. No ack here (the caller fired it). Stale-session logic is
+  // preserved byte-for-byte from the original send().
+  async function runBrainTurn(
+    handle: StreamHandle,
+    transcript: string,
+    lang: string,
+  ): Promise<void> {
+    const result = await tabletTurn(handle, room, transcript, lang)
+    // Tickets land regardless of whether the avatar voiced the reply.
+    if (result.tickets.length === 0 && result.reply) {
+      // A pure answer-in-place turn surfaces on the quiet info line.
+      setInfoLine(result.reply)
+    } else {
+      setCaption(result.reply)
+      setReceipts(result.tickets)
+    }
+    // Reactive-face cue. Defaults neutral if the field is absent.
+    const s = result.sentiment
+    setSentiment(s === 'concern' || s === 'warm' ? s : 'neutral')
+
+    // If the stream was stale at speak time, re-handshake and voice the same
+    // reply once more without re-running the brain.
+    if (!result.spoken && result.reply) {
+      handle = await reconnect()
+      swapArmedRef.current = true
+      const retry = await tabletSpeak(handle, result.reply, result.language)
+      if (!retry.spoken) {
+        setError('The avatar could not speak that, but your request was still sent.')
+      }
+    }
+  }
+
+  // Text mode: type and Ask. Same flow as before, now via the shared helpers.
   async function send() {
     let handle = handleRef.current
-    if (!handle || !text.trim() || status === 'thinking') return
+    if (!handle || !text.trim() || status !== 'live' || recording) return
+    clearIdleTimer()
     setStatus('thinking')
     setError('')
     setCaption('')
@@ -315,50 +387,156 @@ export function Tablet() {
     setInfoLine('')
     setSentiment('neutral')
     try {
-      // Arm the photo->live swap: from here the next presenter frame is a real
-      // speak (the ack), not the idle warmup, so it is safe to reveal the video.
-      swapArmedRef.current = true
-      // Latency mask: the avatar acknowledges immediately, before the heavy turn.
-      // The ack is best effort. If the session went stale, re-handshake once and
-      // retry, but never block the real turn on the ack.
-      const ack = await tabletAck(handle, room, language)
-      if (!ack.spoken) {
-        handle = await reconnect()
-        swapArmedRef.current = true
-        await tabletAck(handle, room, language).catch(() => {})
-      }
-
-      const result = await tabletTurn(handle, room, text, language)
-      // Tickets land regardless of whether the avatar voiced the reply.
-      if (result.tickets.length === 0 && result.reply) {
-        // A pure answer-in-place turn surfaces on the quiet info line.
-        setInfoLine(result.reply)
-      } else {
-        setCaption(result.reply)
-        setReceipts(result.tickets)
-      }
-      // Reactive-face cue. Defaults neutral if the field is absent.
-      const s = result.sentiment
-      setSentiment(s === 'concern' || s === 'warm' ? s : 'neutral')
-
-      // If the stream was stale at speak time, re-handshake and voice the same
-      // reply once more without re-running the brain.
-      if (!result.spoken && result.reply) {
-        handle = await reconnect()
-        swapArmedRef.current = true
-        const retry = await tabletSpeak(handle, result.reply, result.language)
-        if (!retry.spoken) {
-          setError('The avatar could not speak that, but your request was still sent.')
-        }
-      }
+      handle = await fireAck(handle)
+      await runBrainTurn(handle, text, language)
     } catch (err) {
       setError(`Something went wrong. ${String(err)}`)
     } finally {
       setStatus('live')
+      startIdleTimer()
     }
   }
 
-  const speaking = status === 'thinking'
+  // Voice mode: a captured clip. Fire the ack first so it covers Scribe + brain
+  // + TTS, transcribe with Scribe, show what it heard in the box as it sends
+  // (one motion), and let the detected language drive the reply.
+  async function sendVoice(blob: Blob) {
+    let handle = handleRef.current
+    if (!handle || status === 'thinking') return
+    setStatus('thinking')
+    setError('')
+    setCaption('')
+    setReceipts([])
+    setInfoLine('')
+    setSentiment('neutral')
+    try {
+      handle = await fireAck(handle)
+      const heard = await tabletListen(blob)
+      // Scribe's detected language flows straight through, so whatever the guest
+      // speaks (Tagalog, Korean, anything Scribe tags) drives the spoken reply.
+      // Tickets stay English regardless, enforced in the brain prompt. Default
+      // English if the tag is missing.
+      const detected = heard.language || 'en'
+      // Show the transcript. Reflect en/ko on the demo toggle when that is what
+      // was detected; any other language still flows to the turn untouched,
+      // without needing a toggle entry (no language picker UI).
+      setText(heard.text)
+      if (detected === 'en' || detected === 'ko') setLanguage(detected)
+      if (!heard.text.trim()) {
+        setError('I did not catch that. Please try again, or use Text mode.')
+        return
+      }
+      await runBrainTurn(handle, heard.text, detected)
+    } catch (err) {
+      setError(`Something went wrong. ${String(err)}`)
+    } finally {
+      setStatus('live')
+      startIdleTimer()
+    }
+  }
+
+  // Close the mic and tear down the analyser. Called the instant recording ends
+  // and on unmount, so the mic is never live outside a deliberate tap.
+  function stopMicTracks() {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop())
+      mediaStreamRef.current = null
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {})
+      audioCtxRef.current = null
+    }
+  }
+
+  async function startRecording() {
+    // Only from the awake, mic-closed state, and only on a deliberate tap.
+    if (status !== 'live' || recording || !faceVisible) return
+    clearIdleTimer()
+    setError('')
+    let stream: MediaStream
+    try {
+      // The browser prompts here. The mic opens only on this deliberate tap.
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch {
+      setError('Microphone access is needed for Voice. You can use Text mode instead.')
+      return
+    }
+    mediaStreamRef.current = stream
+    chunksRef.current = []
+    const mr = new MediaRecorder(stream)
+    mediaRecorderRef.current = mr
+    mr.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
+    }
+    mr.onstop = () => {
+      // Close the mic immediately, then send the clip.
+      stopMicTracks()
+      setRecording(false)
+      const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' })
+      if (blob.size > 0) sendVoice(blob)
+    }
+    mr.start()
+    setRecording(true)
+    startSilenceWatch(stream)
+  }
+
+  function stopRecording() {
+    const mr = mediaRecorderRef.current
+    if (mr && mr.state !== 'inactive') {
+      mr.stop() // fires onstop, which closes the mic and sends the clip
+    } else {
+      stopMicTracks()
+      setRecording(false)
+    }
+  }
+
+  // Auto-stop after a longer silence than the turn endpoint (~1.8s), and only
+  // once the guest has actually spoken, so a pause before speaking or a natural
+  // mid-sentence pause does not clip the take.
+  function startSilenceWatch(stream: MediaStream) {
+    const ctx = new AudioContext()
+    audioCtxRef.current = ctx
+    // Created after an await, so it can start suspended. Resume it, or the
+    // analyser receives no samples and the silence auto-stop never fires.
+    ctx.resume().catch(() => {})
+    const source = ctx.createMediaStreamSource(stream)
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 2048
+    source.connect(analyser)
+    const buf = new Uint8Array(analyser.fftSize)
+    const SILENCE_RMS = 0.012
+    const SILENCE_MS = 1800
+    let spokenYet = false
+    let silentSince: number | null = null
+    const tick = () => {
+      analyser.getByteTimeDomainData(buf)
+      let sum = 0
+      for (let i = 0; i < buf.length; i++) {
+        const v = (buf[i] - 128) / 128
+        sum += v * v
+      }
+      const rms = Math.sqrt(sum / buf.length)
+      const now = performance.now()
+      if (rms >= SILENCE_RMS) {
+        spokenYet = true
+        silentSince = null
+      } else if (spokenYet) {
+        if (silentSince === null) silentSince = now
+        else if (now - silentSince >= SILENCE_MS) {
+          stopRecording()
+          return
+        }
+      }
+      rafRef.current = requestAnimationFrame(tick)
+    }
+    rafRef.current = requestAnimationFrame(tick)
+  }
+
+  const speaking = status === 'greeting' || status === 'thinking'
 
   return (
     <div className="tablet">
@@ -399,14 +577,12 @@ export function Tablet() {
                 className={`avatar-still${status === 'idle' ? ' resting' : ''}`}
                 src={sourceUrl}
                 alt=""
-                onLoad={() => {
-                  wlog('overlay IMG onLoad -> setStillLoaded(true)')
-                  setStillLoaded(true)
-                }}
+                onLoad={() => setStillLoaded(true)}
               />
             )}
             {status === 'idle' && <div className="avatar-rest-scrim" />}
-            {(status === 'live' || status === 'thinking') && faceVisible ? (
+            {(status === 'greeting' || status === 'live' || status === 'thinking') &&
+            faceVisible ? (
               <span className="live-dot" aria-label="Avatar live">
                 <span className="blink" /> Live
               </span>
@@ -425,6 +601,20 @@ export function Tablet() {
                 <span /> <span /> <span />
               </span>
             )}
+            {/* Push-to-talk lives on the host. Awake + mic closed shows the
+                invite; an active capture shows the stop control. */}
+            {status === 'live' && !recording && (
+              <button className="tile-speak" onClick={startRecording} disabled={!faceVisible}>
+                <Microphone size={22} weight="regular" />
+                Tap to speak
+              </button>
+            )}
+            {recording && (
+              <button className="tile-speak recording" onClick={stopRecording}>
+                <span className="rec-dot" />
+                Listening... tap to stop
+              </button>
+            )}
           </div>
 
           <div
@@ -439,18 +629,20 @@ export function Tablet() {
                 {infoLine}
               </p>
             )}
-            {!caption && !infoLine && status !== 'idle' && (
-              <p className="stage-hint">
-                {status === 'thinking' ? (
-                  'One moment...'
-                ) : (
-                  <>
-                    <CheckCircle size={18} weight="regular" />
-                    Ready when you are.
-                  </>
-                )}
-              </p>
-            )}
+            {!caption &&
+              !infoLine &&
+              (status === 'thinking' || (status === 'live' && !recording)) && (
+                <p className="stage-hint">
+                  {status === 'thinking' ? (
+                    'One moment...'
+                  ) : (
+                    <>
+                      <CheckCircle size={18} weight="regular" />
+                      Ready when you are.
+                    </>
+                  )}
+                </p>
+              )}
           </div>
         </div>
 
@@ -463,24 +655,29 @@ export function Tablet() {
             </div>
           )}
 
-          <div className="tablet-input">
-            <textarea
+          {/* Voice is primary (tap to speak on the host). Typing is the small,
+              quiet fallback if the mic misbehaves on camera. */}
+          <div className="type-fallback">
+            <input
+              className="type-input"
+              type="text"
               value={text}
-              onChange={(e) => setText(e.target.value)}
-              rows={3}
-              placeholder="Say what you need..."
+              onChange={(e) => {
+                setText(e.target.value)
+                bumpIdle()
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') send()
+              }}
+              placeholder="or type your request..."
+              disabled={status !== 'live' || recording}
             />
             <button
-              className="ask"
+              className="type-send"
               onClick={send}
-              disabled={
-                status === 'idle' ||
-                status === 'connecting' ||
-                status === 'thinking' ||
-                !faceVisible
-              }
+              disabled={status !== 'live' || recording || !text.trim()}
             >
-              {status === 'thinking' ? 'Sorting that out...' : 'Ask'}
+              Send
             </button>
           </div>
           {error && <div className="tablet-error">{error}</div>}

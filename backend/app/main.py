@@ -16,7 +16,7 @@ if not os.environ.get("ANTHROPIC_API_KEY"):
 
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -24,7 +24,7 @@ from .pipeline import Pipeline
 from .schema import RoomState, StatusUpdate, Ticket, TurnRequest, TurnResponse
 from .services.avatar import DIDAvatar, DIDError, MockAvatar, StreamSessionError
 from .services.brain import ClaudeBrain, MockBrain
-from .services.stt import MockSTT
+from .services.stt import ElevenLabsScribeSTT, MockSTT
 from .services.tts import ElevenLabsTTS, MockTTS
 from .store import store
 
@@ -52,6 +52,7 @@ pipeline = Pipeline(MockSTT(), _brain, MockTTS(), MockAvatar())
 # runs (and BIGBROS_USE_MOCK_BRAIN dev) never need ElevenLabs or D-ID keys.
 _tts: Optional[ElevenLabsTTS] = None
 _did: Optional[DIDAvatar] = None
+_stt: Optional[ElevenLabsScribeSTT] = None
 # Pre-generated, content-free acknowledgments per language for the latency mask.
 _ack_cache: dict[str, bytes] = {}
 ACK_TEXT = {
@@ -72,6 +73,13 @@ def get_did() -> DIDAvatar:
     if _did is None:
         _did = DIDAvatar()
     return _did
+
+
+def get_stt() -> ElevenLabsScribeSTT:
+    global _stt
+    if _stt is None:
+        _stt = ElevenLabsScribeSTT()
+    return _stt
 
 
 async def get_ack_audio(language: str, tts: ElevenLabsTTS) -> Optional[bytes]:
@@ -177,6 +185,23 @@ async def tablet_avatar() -> dict:
     """The presenter image URL, so the tablet can show the resting host photo
     before wake without creating a stream. Read-only, no D-ID stream is opened."""
     return {"source_url": get_did().avatar_image}
+
+
+@app.post("/tablet/listen")
+async def tablet_listen(clip: UploadFile = File(...)) -> dict:
+    """Transcribe a push-to-talk clip with ElevenLabs Scribe. Returns the text
+    and the detected language (two-letter), which the tablet then sends to
+    /tablet/turn as the reply language. Scribe only: this does not touch the
+    D-ID stream or the pipeline. Fails loudly if ELEVENLABS_API_KEY is missing."""
+    audio = await clip.read()
+    if not audio:
+        raise HTTPException(status_code=400, detail="Empty audio clip")
+    text, language = await get_stt().transcribe(
+        audio,
+        filename=clip.filename or "clip.webm",
+        content_type=clip.content_type or "audio/webm",
+    )
+    return {"text": text, "language": language}
 
 
 @app.post("/tablet/stream/new")

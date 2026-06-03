@@ -568,6 +568,42 @@ body {
   animation-delay: 0.36s;
 }
 
+/* Push-to-talk lives on the host. Anchored at the foot of the tile so it never
+   covers his face. Sized to read clearly when the tablet is filmed on a 16:9
+   screen. Coral invite when awake, a quiet dark stop pill while live. */
+.tile-speak {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--coral);
+  color: #fff;
+  border: none;
+  border-radius: 16px;
+  padding: 15px 30px;
+  font-family: inherit;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  box-shadow: 0 10px 26px rgba(201, 87, 61, 0.44);
+}
+.tile-speak:hover:not(:disabled) {
+  background: #b94c34;
+}
+.tile-speak:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.tile-speak.recording {
+  background: rgba(42, 31, 19, 0.74);
+  color: var(--cream);
+  box-shadow: none;
+}
+
 /* What the host is saying, set on the light sand stage in warm ink. */
 .stage-speech {
   padding: 2px 8px 2px;
@@ -692,6 +728,74 @@ body {
   resize: vertical;
   box-shadow: var(--shadow);
 }
+/* Voice / Text controls. The talk button is the primary voice action; the mode
+   toggle is a quiet segmented control like the language one. Recording state is
+   static (a steady coral dot), keeping the motion budget tight. */
+.input-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.mode-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.mode-toggle button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 13px;
+  cursor: pointer;
+}
+.mode-toggle button.active {
+  background: var(--teal-soft);
+  color: var(--teal-deep);
+}
+.mode-toggle button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.talk {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--teal);
+  color: #fff;
+  border: none;
+  border-radius: 14px;
+  padding: 13px 24px;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.talk:hover:not(:disabled) {
+  background: var(--teal-deep);
+}
+.talk:disabled {
+  background: var(--sand-deep);
+  color: var(--muted);
+  cursor: default;
+}
+.talk.recording {
+  background: var(--surface);
+  color: var(--coral);
+  box-shadow: inset 0 0 0 1px var(--coral);
+}
+.rec-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--coral);
+}
 .ask {
   align-self: flex-start;
   background: var(--teal);
@@ -711,6 +815,47 @@ body {
   background: var(--sand-deep);
   color: var(--muted);
   cursor: default;
+}
+/* Quiet typed fallback. Voice is primary; this stays small and understated. */
+.type-fallback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.type-input {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 12px;
+}
+.type-input::placeholder {
+  color: var(--muted);
+}
+.type-input:disabled {
+  opacity: 0.6;
+}
+.type-send {
+  flex: none;
+  background: transparent;
+  color: var(--teal-deep);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.type-send:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
 }
 .tablet-error {
   color: var(--coral);
