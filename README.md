@@ -8,6 +8,8 @@ tickets routed to the right department lanes on a staff dashboard.
 Built for an ElevenLabs x D-ID hackathon, intended to actually ship for the
 resort's Summer opening.
 
+Repo: https://github.com/reddxmanager/bigbros-roomhost
+
 ## How it works
 
 ```
