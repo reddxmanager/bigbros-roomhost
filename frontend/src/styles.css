@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap');
+
 /* Big Bros White Sand. Tropical-modern, back-of-house register.
    Palette translated from resort materials, not literal textures:
    warm sand and cream surfaces, white cards, ocean teal as the single
@@ -29,6 +31,10 @@
   --cream-dim: rgba(246, 236, 216, 0.62);
   --card: #fcf6ea;
   --sand-deep: #ece0c9;
+
+  /* Display face for guest-tablet headers only (wordmark, suite, caption).
+     Body, receipts, buttons, and controls keep the existing sans. */
+  --display: 'Fraunces', Georgia, 'Times New Roman', serif;
 }
 
 * {
@@ -318,12 +324,55 @@ body {
    the live blink, nothing else.
    -------------------------------------------------------------------------- */
 .tablet {
+  position: relative;
+  isolation: isolate;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  /* Ocean meeting beach: a soft blue band across the top easing through a pale
+     neutral into the warm sand, so the blue-to-sand transition never muddies. */
   background:
-    radial-gradient(130% 100% at 50% -10%, #fcf7ed 0%, #f0e4cf 58%, #e6d6b9 100%);
+    linear-gradient(
+      180deg,
+      #9ed1d5 0%,
+      #bfe2e4 8%,
+      #e6f0ed 19%,
+      #f4ede0 30%,
+      #efe3cd 100%
+    );
   color: var(--ink);
+}
+/* One ambient touch: the ocean band gently breathes (opacity only). It sits
+   above the base gradient but behind all content, so it never affects the
+   avatar tile, the receipts, or any text. transform is untouched, so it cannot
+   interact with the render/swap layout. */
+.tablet::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(122, 196, 201, 0.45) 0%,
+      rgba(158, 210, 214, 0.16) 13%,
+      transparent 28%
+    );
+  opacity: 0.7;
+  animation: ocean-breathe 11s ease-in-out infinite;
+}
+@keyframes ocean-breathe {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.82; }
+}
+/* The shared reduced-motion rule below uses the universal selector, which does
+   not match pseudo-elements, so guard this ambient layer explicitly. */
+@media (prefers-reduced-motion: reduce) {
+  .tablet::before {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 .tablet-header {
   display: flex;
@@ -338,14 +387,16 @@ body {
   gap: 12px;
 }
 .tablet-header .brand {
-  font-weight: 700;
-  font-size: 19px;
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 21px;
   letter-spacing: 0.2px;
 }
 .tablet-header .suite {
+  font-family: var(--display);
   color: var(--teal-deep);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 500;
 }
 
 /* Demo language control. A quiet, small segmented control: it is a demo
@@ -523,6 +574,7 @@ body {
 }
 .caption {
   margin: 0;
+  font-family: var(--display);
   color: var(--ink);
   font-size: 23px;
   line-height: 1.45;
