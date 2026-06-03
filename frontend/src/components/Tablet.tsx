@@ -6,8 +6,10 @@ import {
   Wrench,
   Bell,
   Warning,
-  Microphone,
   CheckCircle,
+  Translate,
+  HandWaving,
+  Info,
 } from '@phosphor-icons/react'
 import type { Dept, RoomState, Ticket } from '../lib/types'
 import {
@@ -52,6 +54,14 @@ function roomFromUrl(): string {
   return new URLSearchParams(window.location.search).get('room') || '4'
 }
 
+// Demo language control. Default English so a non-Korean judge follows the
+// whole interaction; ?lang=ko (or the on-screen toggle) starts the Korean
+// showcase. The reply and caption follow this; tickets stay English regardless.
+type Lang = 'en' | 'ko'
+function langFromUrl(): Lang {
+  return new URLSearchParams(window.location.search).get('lang') === 'ko' ? 'ko' : 'en'
+}
+
 function Receipt({ t }: { t: Ticket }) {
   const Icon = DEPT_ICON[t.dept]
   const allergy = t.tags.find((tag) => tag.startsWith('allergy:'))
@@ -92,6 +102,7 @@ export function Tablet() {
   const swapArmedRef = useRef(false)
 
   const [suite, setSuite] = useState('')
+  const [language, setLanguage] = useState<Lang>(langFromUrl)
   const [status, setStatus] = useState<'idle' | 'connecting' | 'live' | 'thinking'>('idle')
   const [text, setText] = useState(CANONICAL)
   const [caption, setCaption] = useState('')
@@ -223,6 +234,18 @@ export function Tablet() {
       .catch(() => {})
   }, [room])
 
+  // Load the host photo up front so the tile shows a resting host before wake,
+  // not an empty panel. This is the same presenter image the stream will use,
+  // so the resting photo and the on-wake still match.
+  useEffect(() => {
+    fetch('/tablet/avatar')
+      .then((r) => r.json())
+      .then((d: { source_url?: string }) => {
+        if (d.source_url) setSourceUrl(d.source_url)
+      })
+      .catch(() => {})
+  }, [])
+
   // Tear down the stream when the page unloads or the component unmounts, so we
   // never leave a dead peer behind for the next session.
   useEffect(() => {
@@ -294,14 +317,14 @@ export function Tablet() {
       // Latency mask: the avatar acknowledges immediately, before the heavy turn.
       // The ack is best effort. If the session went stale, re-handshake once and
       // retry, but never block the real turn on the ack.
-      const ack = await tabletAck(handle, room)
+      const ack = await tabletAck(handle, room, language)
       if (!ack.spoken) {
         handle = await reconnect()
         swapArmedRef.current = true
-        await tabletAck(handle, room).catch(() => {})
+        await tabletAck(handle, room, language).catch(() => {})
       }
 
-      const result = await tabletTurn(handle, room, text)
+      const result = await tabletTurn(handle, room, text, language)
       // Tickets land regardless of whether the avatar voiced the reply.
       if (result.tickets.length === 0 && result.reply) {
         // A pure answer-in-place turn surfaces on the quiet info line.
@@ -333,59 +356,99 @@ export function Tablet() {
   return (
     <div className="tablet">
       <header className="tablet-header">
-        <span className="brand">Big Bros White Sand</span>
-        {suite && <span className="suite">{suite}</span>}
+        <div className="tablet-wordmark">
+          <span className="brand">Big Bros White Sand</span>
+          {suite && <span className="suite">{suite}</span>}
+        </div>
+        <div className="lang-toggle" role="group" aria-label="Reply language">
+          <Translate size={16} weight="regular" className="lang-icon" />
+          <button
+            className={language === 'en' ? 'active' : ''}
+            onClick={() => setLanguage('en')}
+          >
+            English
+          </button>
+          <button
+            className={language === 'ko' ? 'active' : ''}
+            onClick={() => setLanguage('ko')}
+          >
+            한국어
+          </button>
+        </div>
       </header>
 
       <div className="tablet-body">
-        <div className="avatar-tile">
-          <video ref={videoRef} className="avatar-video" playsInline autoPlay />
-          {/* Static host face covers the tile from connect until a real D-ID
-              frame paints, so the guest never sees a blank grey ring. */}
-          {status !== 'idle' && sourceUrl && !frameLive && (
-            <img
-              className="avatar-still"
-              src={sourceUrl}
-              alt=""
-              onLoad={() => {
-                wlog('overlay IMG onLoad -> setStillLoaded(true)')
-                setStillLoaded(true)
-              }}
-            />
-          )}
-          {(status === 'live' || status === 'thinking') && faceVisible ? (
-            <span className="live-dot" aria-label="Avatar live">
-              <span className="blink" /> Live
-            </span>
-          ) : null}
-          {status === 'idle' && (
-            <button className="wake" onClick={wake}>
-              Tap to wake the avatar
-            </button>
-          )}
-          {status === 'connecting' && <div className="wake-note">Waking the avatar...</div>}
-          {speaking && (
-            <span className="speaking-dots" aria-label="Speaking">
-              <span /> <span /> <span />
-            </span>
-          )}
+        {/* The avatar and the caption read as one warm unit: a teak stage that
+            holds the host's face and what they are saying. */}
+        <div className="avatar-stage">
+          <div className="avatar-tile">
+            <video ref={videoRef} className="avatar-video" playsInline autoPlay />
+            {/* The host photo covers the tile from before wake until a real D-ID
+                frame paints: the resting host (dimmed) before wake, then the
+                still face after connect, so the guest never sees an empty void
+                or a blank grey ring. */}
+            {sourceUrl && !frameLive && (
+              <img
+                className={`avatar-still${status === 'idle' ? ' resting' : ''}`}
+                src={sourceUrl}
+                alt=""
+                onLoad={() => {
+                  wlog('overlay IMG onLoad -> setStillLoaded(true)')
+                  setStillLoaded(true)
+                }}
+              />
+            )}
+            {status === 'idle' && <div className="avatar-rest-scrim" />}
+            {(status === 'live' || status === 'thinking') && faceVisible ? (
+              <span className="live-dot" aria-label="Avatar live">
+                <span className="blink" /> Live
+              </span>
+            ) : null}
+            {status === 'idle' && (
+              <button className="wake" onClick={wake}>
+                <HandWaving size={20} weight="regular" />
+                Tap to wake your host
+              </button>
+            )}
+            {status === 'connecting' && (
+              <div className="wake-note">Waking your host...</div>
+            )}
+            {speaking && (
+              <span className="speaking-dots" aria-label="Speaking">
+                <span /> <span /> <span />
+              </span>
+            )}
+          </div>
+
+          <div className="stage-speech">
+            {caption && <p className="caption">{caption}</p>}
+            {infoLine && (
+              <p className="info-line">
+                <Info size={18} weight="regular" />
+                {infoLine}
+              </p>
+            )}
+            {!caption && !infoLine && status !== 'idle' && (
+              <p className="stage-hint">
+                {status === 'thinking' ? (
+                  'One moment...'
+                ) : (
+                  <>
+                    <CheckCircle size={18} weight="regular" />
+                    Ready when you are.
+                  </>
+                )}
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="tablet-side">
-          {caption && <div className="caption">{caption}</div>}
-          {infoLine && <div className="info-line">{infoLine}</div>}
-
           {receipts.length > 0 && (
             <div className="receipts">
               {receipts.map((t) => (
                 <Receipt key={t.id} t={t} />
               ))}
-            </div>
-          )}
-
-          {!caption && !infoLine && receipts.length === 0 && status !== 'idle' && (
-            <div className="caption-empty">
-              <CheckCircle size={18} weight="regular" /> Ready when you are.
             </div>
           )}
 
@@ -414,8 +477,7 @@ export function Tablet() {
       </div>
 
       <footer className="listening-footer">
-        <Microphone size={18} weight="regular" />
-        Listening for your next request.
+        Big Bros 2026 · Powered by D-ID and ElevenLabs
       </footer>
     </div>
   )

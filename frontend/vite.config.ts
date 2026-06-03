@@ -15,6 +15,8 @@ export default defineConfig({
       '/tablet/stream': 'http://localhost:8000',
       '/tablet/ack': 'http://localhost:8000',
       '/tablet/turn': 'http://localhost:8000',
+      '/tablet/speak': 'http://localhost:8000',
+      '/tablet/avatar': 'http://localhost:8000',
       '/ws': { target: 'ws://localhost:8000', ws: true },
     },
   },

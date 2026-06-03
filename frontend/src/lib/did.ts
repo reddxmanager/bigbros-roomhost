@@ -97,12 +97,13 @@ export async function closeStream(handle: StreamHandle): Promise<void> {
 export async function tabletAck(
   handle: StreamHandle,
   room: string,
+  language: string,
 ): Promise<{ spoken: boolean }> {
   console.log('[did] iceConnectionState before ack:', handle.pc.iceConnectionState)
   const res = await fetch('/tablet/ack', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ room, stream_id: handle.id, session_id: handle.sessionId }),
+    body: JSON.stringify({ room, stream_id: handle.id, session_id: handle.sessionId, language }),
   })
   if (!res.ok) throw new Error(`ack failed: ${res.status}`)
   return res.json()
@@ -112,6 +113,7 @@ export async function tabletTurn(
   handle: StreamHandle,
   room: string,
   text: string,
+  language: string,
 ): Promise<{ reply: string; tickets: Ticket[]; language: string; spoken: boolean }> {
   console.log('[did] iceConnectionState before turn:', handle.pc.iceConnectionState)
   const res = await fetch('/tablet/turn', {
@@ -122,6 +124,7 @@ export async function tabletTurn(
       text,
       stream_id: handle.id,
       session_id: handle.sessionId,
+      language,
     }),
   })
   if (!res.ok) throw new Error(`turn failed: ${res.status}`)

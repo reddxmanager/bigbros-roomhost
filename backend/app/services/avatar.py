@@ -68,6 +68,12 @@ class DIDAvatar:
         self._auth = f"Basic {key}"
         self._avatar_image = os.environ.get("DID_AVATAR_IMAGE_URL") or DEFAULT_AVATAR_IMAGE
 
+    @property
+    def avatar_image(self) -> str:
+        """The presenter image. Exposed so the tablet can show the resting host
+        photo before any stream exists, without creating one."""
+        return self._avatar_image
+
     def _headers(self, extra: Optional[dict] = None) -> dict:
         h = {"Authorization": self._auth, "Content-Type": "application/json"}
         if extra:

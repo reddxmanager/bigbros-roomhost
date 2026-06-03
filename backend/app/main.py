@@ -99,6 +99,9 @@ class TabletAck(BaseModel):
     room: str
     stream_id: str
     session_id: str
+    # Demo language control (defaults English). Drives the ack language and,
+    # on /tablet/turn, the reply/TTS language via the pipeline override.
+    language: str = "en"
 
 
 class TabletTurn(BaseModel):
@@ -106,6 +109,7 @@ class TabletTurn(BaseModel):
     text: str
     stream_id: str
     session_id: str
+    language: str = "en"
 
 
 class TabletSpeak(BaseModel):
@@ -166,6 +170,13 @@ async def update_ticket_status(ticket_id: str, body: StatusUpdate) -> Ticket:
     return ticket
 
 
+@app.get("/tablet/avatar")
+async def tablet_avatar() -> dict:
+    """The presenter image URL, so the tablet can show the resting host photo
+    before wake without creating a stream. Read-only, no D-ID stream is opened."""
+    return {"source_url": get_did().avatar_image}
+
+
 @app.post("/tablet/stream/new")
 async def tablet_stream_new() -> dict:
     """Create a D-ID stream. Returns the WebRTC offer and ids for the browser
@@ -217,11 +228,9 @@ async def tablet_ack(body: TabletAck) -> dict:
     content-free acknowledgment in the room's language before the heavy turn
     returns. spoken=False means the stream went stale and the browser should
     re-handshake."""
-    room_state = store.get_room(body.room)
-    language = room_state.language if room_state else "en"
-    audio = await get_ack_audio(language, get_tts())
+    audio = await get_ack_audio(body.language, get_tts())
     spoken = await _speak_on_stream(body.stream_id, body.session_id, audio)
-    return {"ok": True, "language": language, "spoken": spoken}
+    return {"ok": True, "language": body.language, "spoken": spoken}
 
 
 @app.post("/tablet/turn", response_model=TabletTurnResponse)
@@ -235,6 +244,7 @@ async def tablet_turn(body: TabletTurn) -> TabletTurnResponse:
         room=body.room,
         text=body.text,
         guest_session_id=f"session-{body.room}",
+        language=body.language,
     )
     audio = await get_tts().speak(resp.reply, resp.language)
     spoken = await _speak_on_stream(body.stream_id, body.session_id, audio)
