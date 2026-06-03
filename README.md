@@ -19,6 +19,8 @@ mic tap -> capture one clip -> Scribe (text + language)
         -> reply -> ElevenLabs TTS in the guest's language -> D-ID lip-sync
 ```
 
+![Architecture flow](flowchart.png)
+
 The brain is Claude, in our backend, so routing is ours and visible. D-ID is the
 face and mouth only. The detected language tag from Scribe drives the reply
 language end to end, so a guest can speak Tagalog or Korean and the avatar
@@ -32,6 +34,21 @@ answers in kind while the kitchen ticket still lands in English.
   the mic is never live outside a deliberate tap.
 - **Staff dashboard** at `/`. Calm, websocket-fed ticket lanes (kitchen, bar,
   housekeeping, maintenance, frontdesk) with a single ticket-lands transition.
+
+## Running the demo
+
+With both servers up (see below), open these in the browser:
+
+| URL | What it is |
+|---|---|
+| `http://localhost:5173/` | Staff dashboard. Keep it on a second screen to watch tickets land live. |
+| `http://localhost:5173/tablet?room=4` | Guest tablet, Family Suite (allergy/kids persona). |
+| `http://localhost:5173/tablet?room=4&lang=ko` | Same tablet, staged to open the Korean showcase. |
+
+Tap the host to wake it, tap again to speak. The avatar replies in whatever
+language the guest speaks (English default; try Tagalog or Korean), and the
+tickets still land in English on the dashboard. The English/한국어 toggle in the
+tablet header switches the reply language for the staged Korean take.
 
 ## Stack
 
