@@ -120,6 +120,10 @@ export function Tablet() {
   // the instant real speech starts. Separate from the mic capture context above.
   const inboundCtxRef = useRef<AudioContext | null>(null)
   const inboundRafRef = useRef<number | null>(null)
+  // The plain-setTimeout last-resort reveal, and a detacher for the video-element
+  // reveal listeners. Both are part of the inbound watch's lifecycle.
+  const inboundSafetyRef = useRef<number | null>(null)
+  const inboundVidCleanupRef = useRef<(() => void) | null>(null)
   // Idle-to-sleep timer. Runs only while awake (live, mic closed).
   const idleTimerRef = useRef<number | null>(null)
 
@@ -203,39 +207,114 @@ export function Tablet() {
     }
   }
 
-  // Watch the inbound D-ID audio track and flip audioLive on the first audible
-  // sample. Analysis only: the analyser is never connected to the destination,
-  // so it cannot affect playback. Fully guarded; auto-stops on detection, on a
-  // safety timeout (so we never hold the photo forever over a live presenter),
-  // or when torn down by sleep/reconnect/unmount.
+  // Reveal the live presenter (fade the held host photo) via THREE independent
+  // triggers, so the photo can never get stuck even if one path fails:
+  //   1. RMS detection on a gesture-primed AudioContext. Fastest; lifts the
+  //      instant real speech crosses the threshold. The context is created and
+  //      resumed from the wake TAP (a user gesture), so it runs on a fresh HTTPS
+  //      origin instead of starting suspended (the bug that froze the photo).
+  //   2. The <video> element itself. Once a speak is armed and the warmup grace
+  //      has passed (so we lift to the presenter, not the blank warmup frame), a
+  //      'playing'/'timeupdate' with live frames lifts the photo. Most reliable:
+  //      it depends only on confirmed-live media, not on any audio context.
+  //   3. A plain setTimeout last resort, independent of rAF and the AudioContext,
+  //      that ALWAYS fires after a hard cap.
+  // All three just call setAudioLive(true); the first to fire wins. None of this
+  // touches the swapArmedRef/frameLive wake-render gating or the resting-photo
+  // hold: the photo still holds until the host speaks, it just lifts reliably.
   const AUDIO_START_RMS = 0.02
+  // Warmup is ~3.7s after the first frame (measured), so gate the video-element
+  // reveal past it: trigger 1 normally wins on real audio, and if it fails this
+  // lifts right as audio would start, never onto the blank warmup placeholder.
+  const REVEAL_GRACE_MS = 4500
   const AUDIO_WATCH_TIMEOUT_MS = 12000
-  function stopInboundAudioWatch() {
+
+  // Cancel the watch's loop, timer and listeners but KEEP the (gesture-primed)
+  // AudioContext, so re-arming the watch can reuse the already-running context.
+  function clearInboundWatch() {
     if (inboundRafRef.current !== null) {
       cancelAnimationFrame(inboundRafRef.current)
       inboundRafRef.current = null
     }
+    if (inboundSafetyRef.current !== null) {
+      clearTimeout(inboundSafetyRef.current)
+      inboundSafetyRef.current = null
+    }
+    if (inboundVidCleanupRef.current) {
+      inboundVidCleanupRef.current()
+      inboundVidCleanupRef.current = null
+    }
+  }
+
+  // Full teardown: stop the watch AND close the context. Used on reveal, and by
+  // sleep/reconnect/unmount.
+  function stopInboundAudioWatch() {
+    clearInboundWatch()
     if (inboundCtxRef.current) {
       inboundCtxRef.current.close().catch(() => {})
       inboundCtxRef.current = null
     }
   }
-  function startInboundAudioWatch(stream: MediaStream) {
-    stopInboundAudioWatch()
-    let ctx: AudioContext
+
+  // Create or resume the analysis AudioContext. Called from the wake TAP (a user
+  // gesture) so it starts running, then reused when the watch attaches. Returns
+  // null if Web Audio is unavailable (triggers 2 and 3 still cover the reveal).
+  function primeInboundCtx(): AudioContext | null {
+    if (inboundCtxRef.current) {
+      inboundCtxRef.current.resume().catch(() => {})
+      return inboundCtxRef.current
+    }
     try {
       const AC =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-      ctx = new AC()
+      const ctx = new AC()
+      inboundCtxRef.current = ctx
+      ctx.resume().catch(() => {})
+      return ctx
     } catch {
-      // No Web Audio: fall back to revealing on frame so we never hang on the
-      // photo. Rare; keeps the original behavior as a floor.
-      setAudioLive(true)
-      return
+      return null
     }
-    inboundCtxRef.current = ctx
-    ctx.resume().catch(() => {})
+  }
+
+  function startInboundAudioWatch(stream: MediaStream) {
+    // Re-arming: drop any prior loop/timer/listeners but keep a primed context.
+    clearInboundWatch()
+    const start = performance.now()
+
+    // Trigger 3: hard last resort. Plain timer, no rAF/AudioContext dependency,
+    // so it always fires even if both other paths silently fail.
+    inboundSafetyRef.current = window.setTimeout(() => {
+      setAudioLive(true)
+      stopInboundAudioWatch()
+    }, AUDIO_WATCH_TIMEOUT_MS)
+
+    // Trigger 2: the <video> element itself. After a speak is armed and the
+    // warmup grace has passed, the next frame-advancing event with live video
+    // lifts the photo. Confirmed-live media (videoWidth > 0) is the signal.
+    const v = videoRef.current
+    if (v) {
+      const onVid = () => {
+        if (!swapArmedRef.current) return
+        if (performance.now() - start < REVEAL_GRACE_MS) return
+        if (v.videoWidth > 0) {
+          setAudioLive(true)
+          stopInboundAudioWatch()
+        }
+      }
+      inboundVidCleanupRef.current = () => {
+        v.removeEventListener('timeupdate', onVid)
+        v.removeEventListener('playing', onVid)
+      }
+      v.addEventListener('timeupdate', onVid)
+      v.addEventListener('playing', onVid)
+    }
+
+    // Trigger 1: RMS detection on the gesture-primed context. Analysis only (the
+    // analyser is never connected to the destination, so it cannot affect
+    // playback). The rAF loop runs until a reveal stops the watch.
+    const ctx = primeInboundCtx()
+    if (!ctx) return
     let analyser: AnalyserNode
     try {
       const src = ctx.createMediaStreamSource(stream)
@@ -243,12 +322,9 @@ export function Tablet() {
       analyser.fftSize = 1024
       src.connect(analyser)
     } catch {
-      stopInboundAudioWatch()
-      setAudioLive(true)
       return
     }
     const buf = new Uint8Array(analyser.fftSize)
-    const start = performance.now()
     const tick = () => {
       analyser.getByteTimeDomainData(buf)
       let sum = 0
@@ -258,12 +334,6 @@ export function Tablet() {
       }
       const rms = Math.sqrt(sum / buf.length)
       if (rms > AUDIO_START_RMS) {
-        setAudioLive(true)
-        stopInboundAudioWatch()
-        return
-      }
-      if (performance.now() - start >= AUDIO_WATCH_TIMEOUT_MS) {
-        // Safety net: never leave the photo held indefinitely.
         setAudioLive(true)
         stopInboundAudioWatch()
         return
@@ -338,6 +408,11 @@ export function Tablet() {
     setFrameLive(false)
     setAudioLive(false)
     stopInboundAudioWatch()
+    // Prime the analysis AudioContext now, inside the wake tap (a user gesture),
+    // so it starts running instead of suspended on a fresh HTTPS origin. The
+    // inbound watch reuses this context, which is what lets trigger 1 detect
+    // speech at all. Harmless if Web Audio is unavailable.
+    primeInboundCtx()
     setStillLoaded(false)
     // Fresh session: nothing bound yet, and the swap stays disarmed until the
     // greeting (the first speak) so the warmup frame cannot pull the photo.
