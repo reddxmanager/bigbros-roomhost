@@ -22,6 +22,7 @@ import {
   tabletListen,
   type StreamHandle,
 } from '../lib/did'
+import { apiUrl } from '../lib/config'
 
 const DEPT_ICON: Record<Dept, typeof ForkKnife> = {
   kitchen: ForkKnife,
@@ -115,6 +116,10 @@ export function Tablet() {
   const chunksRef = useRef<Blob[]>([])
   const audioCtxRef = useRef<AudioContext | null>(null)
   const rafRef = useRef<number | null>(null)
+  // Inbound-audio watch: listens to the D-ID stream's audio and flips audioLive
+  // the instant real speech starts. Separate from the mic capture context above.
+  const inboundCtxRef = useRef<AudioContext | null>(null)
+  const inboundRafRef = useRef<number | null>(null)
   // Idle-to-sleep timer. Runs only while awake (live, mic closed).
   const idleTimerRef = useRef<number | null>(null)
 
@@ -133,8 +138,16 @@ export function Tablet() {
   // The presenter image, for the static-face fallback.
   const [sourceUrl, setSourceUrl] = useState('')
   // A real D-ID video frame has painted into the tile (idle/warmup or first
-  // speak). Until then we cover the tile with the static host photo.
+  // speak). Used only to know a face is present (faceVisible) for the LIVE dot
+  // and enabled controls. It is NOT what reveals the presenter: D-ID streams
+  // blank warmup frames ~3s before real speech, so frameLive fires far too early
+  // (measured: frame at t2, audio at t2+3.7s). The photo reveal is gated on
+  // audioLive instead.
   const [frameLive, setFrameLive] = useState(false)
+  // Real speech has actually started on the D-ID stream (first audible sample).
+  // This, not frameLive, is what cross-fades the held host photo to the live
+  // presenter, so the photo holds warm over the warmup wait with no grey void.
+  const [audioLive, setAudioLive] = useState(false)
   // The static host photo has loaded, so a face is on the tile even before any
   // real frame. Either of these means the guest is looking at a face, not a
   // grey ring, which is what gates LIVE and the enabled Ask button.
@@ -153,10 +166,17 @@ export function Tablet() {
     // play() can reject with AbortError if a load interrupts it. That race is
     // benign and self-heals, so swallow it rather than surfacing an error.
     v.play().catch(() => {})
+
+    // Listen to the stream's audio and reveal the presenter the moment real
+    // speech actually starts, not when the first (blank warmup) frame paints.
+    startInboundAudioWatch(stream)
+
     // Swap to live video only on the first frame that arrives AFTER a speak is
     // requested. D-ID's idle/warmup frame is a real presented frame but a blank
     // placeholder, not the presenter, so we ignore frames until the swap is
     // armed and keep re-registering to catch the first real presenter frame.
+    // frameLive only marks "a face is on the tile" (faceVisible); the photo
+    // reveal itself is gated on audioLive above, since this fires ~3s early.
     const vv = v as HTMLVideoElement & {
       requestVideoFrameCallback?: (
         cb: (now: number, meta: Record<string, number>) => void,
@@ -183,8 +203,78 @@ export function Tablet() {
     }
   }
 
+  // Watch the inbound D-ID audio track and flip audioLive on the first audible
+  // sample. Analysis only: the analyser is never connected to the destination,
+  // so it cannot affect playback. Fully guarded; auto-stops on detection, on a
+  // safety timeout (so we never hold the photo forever over a live presenter),
+  // or when torn down by sleep/reconnect/unmount.
+  const AUDIO_START_RMS = 0.02
+  const AUDIO_WATCH_TIMEOUT_MS = 12000
+  function stopInboundAudioWatch() {
+    if (inboundRafRef.current !== null) {
+      cancelAnimationFrame(inboundRafRef.current)
+      inboundRafRef.current = null
+    }
+    if (inboundCtxRef.current) {
+      inboundCtxRef.current.close().catch(() => {})
+      inboundCtxRef.current = null
+    }
+  }
+  function startInboundAudioWatch(stream: MediaStream) {
+    stopInboundAudioWatch()
+    let ctx: AudioContext
+    try {
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      ctx = new AC()
+    } catch {
+      // No Web Audio: fall back to revealing on frame so we never hang on the
+      // photo. Rare; keeps the original behavior as a floor.
+      setAudioLive(true)
+      return
+    }
+    inboundCtxRef.current = ctx
+    ctx.resume().catch(() => {})
+    let analyser: AnalyserNode
+    try {
+      const src = ctx.createMediaStreamSource(stream)
+      analyser = ctx.createAnalyser()
+      analyser.fftSize = 1024
+      src.connect(analyser)
+    } catch {
+      stopInboundAudioWatch()
+      setAudioLive(true)
+      return
+    }
+    const buf = new Uint8Array(analyser.fftSize)
+    const start = performance.now()
+    const tick = () => {
+      analyser.getByteTimeDomainData(buf)
+      let sum = 0
+      for (let i = 0; i < buf.length; i++) {
+        const x = (buf[i] - 128) / 128
+        sum += x * x
+      }
+      const rms = Math.sqrt(sum / buf.length)
+      if (rms > AUDIO_START_RMS) {
+        setAudioLive(true)
+        stopInboundAudioWatch()
+        return
+      }
+      if (performance.now() - start >= AUDIO_WATCH_TIMEOUT_MS) {
+        // Safety net: never leave the photo held indefinitely.
+        setAudioLive(true)
+        stopInboundAudioWatch()
+        return
+      }
+      inboundRafRef.current = requestAnimationFrame(tick)
+    }
+    inboundRafRef.current = requestAnimationFrame(tick)
+  }
+
   useEffect(() => {
-    fetch('/rooms')
+    fetch(apiUrl('/rooms'))
       .then((r) => r.json())
       .then((rooms: RoomState[]) => {
         const found = rooms.find((x) => x.room === room)
@@ -197,7 +287,7 @@ export function Tablet() {
   // not an empty panel. This is the same presenter image the stream will use,
   // so the resting photo and the on-wake still match.
   useEffect(() => {
-    fetch('/tablet/avatar')
+    fetch(apiUrl('/tablet/avatar'))
       .then((r) => r.json())
       .then((d: { source_url?: string }) => {
         if (d.source_url) setSourceUrl(d.source_url)
@@ -215,8 +305,10 @@ export function Tablet() {
     return () => {
       window.removeEventListener('beforeunload', onUnload)
       if (handleRef.current) closeStream(handleRef.current)
-      // Never leave the mic open or a sleep timer pending on unmount.
+      // Never leave the mic open, an audio watch running, or a sleep timer
+      // pending on unmount.
       stopMicTracks()
+      stopInboundAudioWatch()
       clearIdleTimer()
     }
   }, [])
@@ -244,6 +336,8 @@ export function Tablet() {
     setInfoLine('')
     setSentiment('neutral')
     setFrameLive(false)
+    setAudioLive(false)
+    stopInboundAudioWatch()
     setStillLoaded(false)
     // Fresh session: nothing bound yet, and the swap stays disarmed until the
     // greeting (the first speak) so the warmup frame cannot pull the photo.
@@ -291,6 +385,7 @@ export function Tablet() {
   function sleep() {
     clearIdleTimer()
     stopMicTracks()
+    stopInboundAudioWatch()
     if (handleRef.current) {
       closeStream(handleRef.current)
       handleRef.current = null
@@ -299,6 +394,7 @@ export function Tablet() {
     swapArmedRef.current = false
     setRecording(false)
     setFrameLive(false)
+    setAudioLive(false)
     setCaption('')
     setReceipts([])
     setInfoLine('')
@@ -313,9 +409,11 @@ export function Tablet() {
       handleRef.current = null
     }
     // The fresh stream has its own warmup frame. Cover the tile with the photo
-    // again and disarm the swap until the caller re-speaks, so the new warmup
-    // frame cannot pull the photo onto a blank frame.
+    // again (audioLive false) and disarm the swap until the caller re-speaks, so
+    // the new warmup frame and the wait before its audio cannot show through.
     setFrameLive(false)
+    setAudioLive(false)
+    stopInboundAudioWatch()
     swapArmedRef.current = false
     const handle = await connectAvatar(bindTrack)
     handleRef.current = handle
@@ -537,6 +635,12 @@ export function Tablet() {
   }
 
   const speaking = status === 'greeting' || status === 'thinking'
+  // The host photo is held opaque until real speech starts (audioLive). While it
+  // is held and we are awake, the host should read as alive and gathering, not a
+  // grey void: show the speaking-dots over the photo through the warmup wait, and
+  // hold back the "tap to speak" invite until the host has actually come alive.
+  const awaitingFirstVoice =
+    faceVisible && !audioLive && status !== 'idle' && status !== 'connecting'
 
   return (
     <div className="tablet">
@@ -568,13 +672,19 @@ export function Tablet() {
         <div className="avatar-stage">
           <div className="avatar-tile">
             <video ref={videoRef} className="avatar-video" playsInline autoPlay />
-            {/* The host photo covers the tile from before wake until a real D-ID
-                frame paints: the resting host (dimmed) before wake, then the
-                still face after connect, so the guest never sees an empty void
-                or a blank grey ring. */}
-            {sourceUrl && !frameLive && (
+            {/* The host photo covers the tile from before wake until REAL speech
+                starts (audioLive), the resting host (dimmed) before wake, then the
+                still face through connect AND the ~3s warmup wait, so the guest
+                never sees an empty void or a blank grey ring. It stays mounted and
+                FADES OUT only when audio actually begins (not on the early warmup
+                frame), then cross-fades to the live presenter. The fade is
+                one-directional (declared on .faded), so when audioLive drops on
+                reconnect the photo covers again instantly. */}
+            {sourceUrl && (
               <img
-                className={`avatar-still${status === 'idle' ? ' resting' : ''}`}
+                className={`avatar-still${status === 'idle' ? ' resting' : ''}${
+                  audioLive ? ' faded' : ''
+                }`}
                 src={sourceUrl}
                 alt=""
                 onLoad={() => setStillLoaded(true)}
@@ -596,14 +706,16 @@ export function Tablet() {
             {status === 'connecting' && (
               <div className="wake-note">Waking your host...</div>
             )}
-            {speaking && (
+            {(speaking || awaitingFirstVoice) && (
               <span className="speaking-dots" aria-label="Speaking">
                 <span /> <span /> <span />
               </span>
             )}
             {/* Push-to-talk lives on the host. Awake + mic closed shows the
-                invite; an active capture shows the stop control. */}
-            {status === 'live' && !recording && (
+                invite, but only once the host has actually come alive (audioLive),
+                so the invite never overlaps the gathering dots or asks the guest
+                to speak over the greeting that has not started yet. */}
+            {status === 'live' && !recording && audioLive && (
               <button className="tile-speak" onClick={startRecording} disabled={!faceVisible}>
                 <Microphone size={22} weight="regular" />
                 Tap to speak
@@ -631,9 +743,9 @@ export function Tablet() {
             )}
             {!caption &&
               !infoLine &&
-              (status === 'thinking' || (status === 'live' && !recording)) && (
+              (status === 'thinking' || awaitingFirstVoice || (status === 'live' && !recording)) && (
                 <p className="stage-hint">
-                  {status === 'thinking' ? (
+                  {status === 'thinking' || awaitingFirstVoice ? (
                     'One moment...'
                   ) : (
                     <>

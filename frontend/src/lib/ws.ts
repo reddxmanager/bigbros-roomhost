@@ -1,8 +1,8 @@
 import type { WsMessage } from './types'
+import { wsUrl } from './config'
 
 export function openDashboardWs(onMessage: (m: WsMessage) => void): WebSocket {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(`${proto}//${location.host}/ws/dashboard`)
+  const ws = new WebSocket(wsUrl('/ws/dashboard'))
   ws.onmessage = (e) => {
     try {
       onMessage(JSON.parse(e.data) as WsMessage)

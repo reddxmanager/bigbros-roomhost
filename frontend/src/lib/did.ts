@@ -4,6 +4,7 @@
 // video track, since D-ID lip-syncs our ElevenLabs audio and streams it back.
 
 import type { Ticket } from './types'
+import { apiUrl } from './config'
 
 export interface StreamHandle {
   id: string
@@ -19,7 +20,7 @@ const CONNECT_TIMEOUT_MS = 15000
 export async function connectAvatar(
   onTrack: (stream: MediaStream) => void,
 ): Promise<StreamHandle> {
-  const res = await fetch('/tablet/stream/new', { method: 'POST' })
+  const res = await fetch(apiUrl('/tablet/stream/new'), { method: 'POST' })
   if (!res.ok) throw new Error(`stream create failed: ${res.status}`)
   const { id, session_id, offer, ice_servers, source_url } = await res.json()
 
@@ -31,7 +32,7 @@ export async function connectAvatar(
 
   pc.addEventListener('icecandidate', (e) => {
     const c = e.candidate
-    fetch(`/tablet/stream/${id}/ice`, {
+    fetch(apiUrl(`/tablet/stream/${id}/ice`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -66,7 +67,7 @@ export async function connectAvatar(
   const answer = await pc.createAnswer()
   await pc.setLocalDescription(answer)
 
-  await fetch(`/tablet/stream/${id}/sdp`, {
+  await fetch(apiUrl(`/tablet/stream/${id}/sdp`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id, answer }),
@@ -78,7 +79,7 @@ export async function connectAvatar(
 
 export async function closeStream(handle: StreamHandle): Promise<void> {
   try {
-    await fetch(`/tablet/stream/${handle.id}/close`, {
+    await fetch(apiUrl(`/tablet/stream/${handle.id}/close`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: handle.sessionId }),
@@ -98,7 +99,7 @@ export async function tabletListen(
 ): Promise<{ text: string; language: string }> {
   const form = new FormData()
   form.append('clip', blob, 'clip.webm')
-  const res = await fetch('/tablet/listen', { method: 'POST', body: form })
+  const res = await fetch(apiUrl('/tablet/listen'), { method: 'POST', body: form })
   if (!res.ok) throw new Error(`listen failed: ${res.status}`)
   return res.json()
 }
@@ -108,7 +109,7 @@ export async function tabletAck(
   room: string,
   language: string,
 ): Promise<{ spoken: boolean }> {
-  const res = await fetch('/tablet/ack', {
+  const res = await fetch(apiUrl('/tablet/ack'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ room, stream_id: handle.id, session_id: handle.sessionId, language }),
@@ -129,7 +130,7 @@ export async function tabletTurn(
   spoken: boolean
   sentiment: string
 }> {
-  const res = await fetch('/tablet/turn', {
+  const res = await fetch(apiUrl('/tablet/turn'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -149,7 +150,7 @@ export async function tabletSpeak(
   text: string,
   language: string,
 ): Promise<{ spoken: boolean }> {
-  const res = await fetch('/tablet/speak', {
+  const res = await fetch(apiUrl('/tablet/speak'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

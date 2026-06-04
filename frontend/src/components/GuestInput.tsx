@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { TurnResponse } from '../lib/types'
+import { apiUrl } from '../lib/config'
 
 const CANONICAL =
   "Hey, the aircon in our room's not really cooling, and can we get two more San Migs and some extra rice? Oh, what time's breakfast?"
@@ -15,7 +16,7 @@ export function GuestInput() {
     setPending(true)
     setReply('')
     try {
-      const res = await fetch('/turn', {
+      const res = await fetch(apiUrl('/turn'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ room, text }),
