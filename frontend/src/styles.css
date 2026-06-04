@@ -477,6 +477,17 @@ body {
   height: 100%;
   object-fit: cover;
 }
+/* The overlay holds over the photo->presenter handoff: once the first real D-ID
+   frame paints (frameLive adds .faded), the photo fades out over the compositing
+   gap instead of being cut in the same commit, which is what flashed the empty
+   tile. The transition lives on .faded so the fade is one-directional: removing
+   the class (frameLive drops on reconnect) snaps the photo back instantly to
+   re-cover the new warmup frame, preserving stale-session stability. */
+.avatar-still.faded {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
 /* Resting state before wake: the host is present but dimmed, waiting. Kept
    light enough that the face is clearly visible (that is what carries the
    warmth); a soft warm overlay sits the coral wake button on top of it. */
