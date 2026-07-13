@@ -4,7 +4,18 @@
 // video track, since D-ID lip-syncs our ElevenLabs audio and streams it back.
 
 import type { Ticket } from './types'
-import { apiUrl } from './config'
+import { apiUrl, deviceHeaders } from './config'
+
+// JSON POST with the device token attached. Every tablet call is authenticated;
+// the token is the room identity, resolved server-side. Exported because the
+// Simli path (lib/simli.ts) talks to the same endpoints.
+export function devicePost(path: string, body?: unknown): Promise<Response> {
+  return fetch(apiUrl(path), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...deviceHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+}
 
 export interface StreamHandle {
   id: string
@@ -20,7 +31,7 @@ const CONNECT_TIMEOUT_MS = 15000
 export async function connectAvatar(
   onTrack: (stream: MediaStream) => void,
 ): Promise<StreamHandle> {
-  const res = await fetch(apiUrl('/tablet/stream/new'), { method: 'POST' })
+  const res = await devicePost('/tablet/stream/new')
   if (!res.ok) throw new Error(`stream create failed: ${res.status}`)
   const { id, session_id, offer, ice_servers, source_url } = await res.json()
 
@@ -32,15 +43,11 @@ export async function connectAvatar(
 
   pc.addEventListener('icecandidate', (e) => {
     const c = e.candidate
-    fetch(apiUrl(`/tablet/stream/${id}/ice`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id,
-        candidate: c ? c.candidate : null,
-        sdpMid: c ? c.sdpMid : null,
-        sdpMLineIndex: c ? c.sdpMLineIndex : null,
-      }),
+    devicePost(`/tablet/stream/${id}/ice`, {
+      session_id,
+      candidate: c ? c.candidate : null,
+      sdpMid: c ? c.sdpMid : null,
+      sdpMLineIndex: c ? c.sdpMLineIndex : null,
     }).catch(() => {})
   })
 
@@ -67,11 +74,7 @@ export async function connectAvatar(
   const answer = await pc.createAnswer()
   await pc.setLocalDescription(answer)
 
-  await fetch(apiUrl(`/tablet/stream/${id}/sdp`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id, answer }),
-  })
+  await devicePost(`/tablet/stream/${id}/sdp`, { session_id, answer })
 
   await connected
   return { id, sessionId: session_id, pc, sourceUrl: source_url || '' }
@@ -79,11 +82,7 @@ export async function connectAvatar(
 
 export async function closeStream(handle: StreamHandle): Promise<void> {
   try {
-    await fetch(apiUrl(`/tablet/stream/${handle.id}/close`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: handle.sessionId }),
-    })
+    await devicePost(`/tablet/stream/${handle.id}/close`, { session_id: handle.sessionId })
   } catch {
     // best effort
   }
@@ -99,7 +98,11 @@ export async function tabletListen(
 ): Promise<{ text: string; language: string }> {
   const form = new FormData()
   form.append('clip', blob, 'clip.webm')
-  const res = await fetch(apiUrl('/tablet/listen'), { method: 'POST', body: form })
+  const res = await fetch(apiUrl('/tablet/listen'), {
+    method: 'POST',
+    headers: deviceHeaders(),
+    body: form,
+  })
   if (!res.ok) throw new Error(`listen failed: ${res.status}`)
   return res.json()
 }
@@ -109,10 +112,11 @@ export async function tabletAck(
   room: string,
   language: string,
 ): Promise<{ spoken: boolean }> {
-  const res = await fetch(apiUrl('/tablet/ack'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ room, stream_id: handle.id, session_id: handle.sessionId, language }),
+  const res = await devicePost('/tablet/ack', {
+    room,
+    stream_id: handle.id,
+    session_id: handle.sessionId,
+    language,
   })
   if (!res.ok) throw new Error(`ack failed: ${res.status}`)
   return res.json()
@@ -130,16 +134,12 @@ export async function tabletTurn(
   spoken: boolean
   sentiment: string
 }> {
-  const res = await fetch(apiUrl('/tablet/turn'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      room,
-      text,
-      stream_id: handle.id,
-      session_id: handle.sessionId,
-      language,
-    }),
+  const res = await devicePost('/tablet/turn', {
+    room,
+    text,
+    stream_id: handle.id,
+    session_id: handle.sessionId,
+    language,
   })
   if (!res.ok) throw new Error(`turn failed: ${res.status}`)
   return res.json()
@@ -150,15 +150,11 @@ export async function tabletSpeak(
   text: string,
   language: string,
 ): Promise<{ spoken: boolean }> {
-  const res = await fetch(apiUrl('/tablet/speak'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      stream_id: handle.id,
-      session_id: handle.sessionId,
-      text,
-      language,
-    }),
+  const res = await devicePost('/tablet/speak', {
+    stream_id: handle.id,
+    session_id: handle.sessionId,
+    text,
+    language,
   })
   if (!res.ok) throw new Error(`speak failed: ${res.status}`)
   return res.json()

@@ -12,7 +12,7 @@ import {
   Info,
   Microphone,
 } from '@phosphor-icons/react'
-import type { Dept, RoomState, Ticket } from '../lib/types'
+import type { Dept, Ticket } from '../lib/types'
 import {
   connectAvatar,
   closeStream,
@@ -22,7 +22,20 @@ import {
   tabletListen,
   type StreamHandle,
 } from '../lib/did'
-import { apiUrl } from '../lib/config'
+import {
+  connectSimli,
+  simliAck,
+  simliSpeak,
+  simliTurn,
+  speakB64,
+  type SimliClient,
+} from '../lib/simli'
+import { apiUrl, deviceHeaders } from '../lib/config'
+
+// Which service renders the live face. The backend decides (it knows which
+// keys exist); the tablet just takes the matching wake path. 'simli' is the
+// production path; 'did' is the legacy hackathon path kept behind an env.
+type AvatarProvider = 'did' | 'simli'
 
 const DEPT_ICON: Record<Dept, typeof ForkKnife> = {
   kitchen: ForkKnife,
@@ -95,9 +108,18 @@ function Receipt({ t }: { t: Ticket }) {
 }
 
 export function Tablet() {
-  const room = roomFromUrl()
+  // Starts from the URL for dev; the server-resolved room (from the device
+  // token) overwrites it once /tablet/room answers.
+  const [room, setRoom] = useState(roomFromUrl())
   const videoRef = useRef<HTMLVideoElement>(null)
   const handleRef = useRef<StreamHandle | null>(null)
+  // Simli path: the SDK renders into videoRef and this (hidden) audio element,
+  // and the client object is our session handle.
+  const audioElRef = useRef<HTMLAudioElement>(null)
+  const simliRef = useRef<SimliClient | null>(null)
+  // Provider as state (for render) mirrored into a ref (for async handlers,
+  // which would otherwise close over a stale value).
+  const providerRef = useRef<AvatarProvider>('did')
   // The MediaStream id we have already bound, so the track event firing more
   // than once does not re-assign srcObject or double-register the frame
   // callback (that re-assignment is what caused the play() AbortError).
@@ -128,6 +150,7 @@ export function Tablet() {
   const idleTimerRef = useRef<number | null>(null)
 
   const [suite, setSuite] = useState('')
+  const [provider, setProvider] = useState<AvatarProvider>('did')
   const [language, setLanguage] = useState<Lang>(langFromUrl)
   const [recording, setRecording] = useState(false)
   const [status, setStatus] = useState<Status>('idle')
@@ -343,12 +366,17 @@ export function Tablet() {
     inboundRafRef.current = requestAnimationFrame(tick)
   }
 
+  // Ask the backend which room this device is provisioned for. The device
+  // token is the identity; the ?room= param only matters in dev-open mode.
+  // /rooms is staff-only now, so the tablet no longer reads the full listing.
   useEffect(() => {
-    fetch(apiUrl('/rooms'))
+    fetch(apiUrl(`/tablet/room?room=${encodeURIComponent(room)}`), {
+      headers: deviceHeaders(),
+    })
       .then((r) => r.json())
-      .then((rooms: RoomState[]) => {
-        const found = rooms.find((x) => x.room === room)
-        if (found) setSuite(found.suite_name)
+      .then((d: { room?: string; suite_name?: string }) => {
+        if (d.suite_name) setSuite(d.suite_name)
+        if (d.room && d.room !== room) setRoom(d.room)
       })
       .catch(() => {})
   }, [room])
@@ -357,10 +385,14 @@ export function Tablet() {
   // not an empty panel. This is the same presenter image the stream will use,
   // so the resting photo and the on-wake still match.
   useEffect(() => {
-    fetch(apiUrl('/tablet/avatar'))
+    fetch(apiUrl('/tablet/avatar'), { headers: deviceHeaders() })
       .then((r) => r.json())
-      .then((d: { source_url?: string }) => {
+      .then((d: { source_url?: string; provider?: string }) => {
         if (d.source_url) setSourceUrl(d.source_url)
+        if (d.provider === 'simli' || d.provider === 'did') {
+          providerRef.current = d.provider
+          setProvider(d.provider)
+        }
       })
       .catch(() => {})
   }, [])
@@ -369,6 +401,7 @@ export function Tablet() {
   // never leave a dead peer behind for the next session.
   useEffect(() => {
     const onUnload = () => {
+      if (simliRef.current) simliRef.current.stop().catch(() => {})
       if (handleRef.current) closeStream(handleRef.current)
     }
     window.addEventListener('beforeunload', onUnload)
@@ -419,6 +452,33 @@ export function Tablet() {
     boundStreamIdRef.current = null
     swapArmedRef.current = false
     try {
+      if (providerRef.current === 'simli') {
+        // Simli path. The SDK owns the WebRTC and renders straight into our
+        // video/audio elements. No warmup-frame dance: the face is honest
+        // from the first connected frame, so the photo lifts immediately.
+        if (simliRef.current) {
+          simliRef.current.stop().catch(() => {})
+          simliRef.current = null
+        }
+        const v = videoRef.current
+        const a = audioElRef.current
+        if (!v || !a) throw new Error('media elements not ready')
+        const client = await connectSimli(v, a)
+        simliRef.current = client
+        client.on('failed', () => {
+          setError('The avatar connection dropped. Tap to wake again.')
+          sleep()
+        })
+        setFrameLive(true)
+        setAudioLive(true)
+        setStatus('greeting')
+        const r = await simliSpeak(GREETING[language], language)
+        if (r.audio_b64) await speakB64(client, r.audio_b64)
+        setStatus('live')
+        startIdleTimer()
+        return
+      }
+      // D-ID path (legacy, behind BIGBROS_AVATAR_PROVIDER=did).
       // Close any prior stream before opening a fresh one.
       if (handleRef.current) {
         await closeStream(handleRef.current)
@@ -461,6 +521,10 @@ export function Tablet() {
     clearIdleTimer()
     stopMicTracks()
     stopInboundAudioWatch()
+    if (simliRef.current) {
+      simliRef.current.stop().catch(() => {})
+      simliRef.current = null
+    }
     if (handleRef.current) {
       closeStream(handleRef.current)
       handleRef.current = null
@@ -500,17 +564,31 @@ export function Tablet() {
   // original send(). Returns the (possibly re-handshaked) handle. Split out so
   // the voice path can fire the ack the instant the clip is sent, covering the
   // Scribe round-trip as well as brain + TTS.
-  async function fireAck(handle: StreamHandle): Promise<StreamHandle> {
+  async function fireAck(handle: StreamHandle | null): Promise<StreamHandle | null> {
     // Arm the photo->live swap: from here the next presenter frame is a real
     // speak (the ack), not the idle warmup, so it is safe to reveal the video.
     swapArmedRef.current = true
-    // The ack is best effort. If the session went stale, re-handshake once and
-    // retry, but never block the real turn on the ack.
-    const ack = await tabletAck(handle, room, language)
-    if (!ack.spoken) {
-      handle = await reconnect()
-      swapArmedRef.current = true
-      await tabletAck(handle, room, language).catch(() => {})
+    // The ack is best effort, and that now means REALLY best effort: any
+    // failure here (avatar out of credits, network hiccup, anything) is
+    // swallowed so the brain turn always runs. An unvoiced ack costs a few
+    // seconds of silence; an aborted turn costs the guest's actual request.
+    try {
+      if (providerRef.current === 'simli') {
+        const ack = await simliAck(room, language)
+        if (ack.audio_b64 && simliRef.current) {
+          await speakB64(simliRef.current, ack.audio_b64)
+        }
+        return handle
+      }
+      if (!handle) return handle
+      const ack = await tabletAck(handle, room, language)
+      if (!ack.spoken) {
+        handle = await reconnect()
+        swapArmedRef.current = true
+        await tabletAck(handle, room, language).catch(() => {})
+      }
+    } catch (err) {
+      console.error('ack failed, continuing to the turn', err)
     }
     return handle
   }
@@ -519,10 +597,33 @@ export function Tablet() {
   // stale stream. No ack here (the caller fired it). Stale-session logic is
   // preserved byte-for-byte from the original send().
   async function runBrainTurn(
-    handle: StreamHandle,
+    handle: StreamHandle | null,
     transcript: string,
     lang: string,
   ): Promise<void> {
+    if (providerRef.current === 'simli') {
+      const result = await simliTurn(room, transcript, lang)
+      if (result.tickets.length === 0 && result.reply) {
+        setInfoLine(result.reply)
+      } else {
+        setCaption(result.reply)
+        setReceipts(result.tickets)
+      }
+      const sv = result.sentiment
+      setSentiment(sv === 'concern' || sv === 'warm' ? sv : 'neutral')
+      // The browser does the speaking on this path. A failure here is voice
+      // only: the tickets above already landed and rendered.
+      if (result.audio_b64 && simliRef.current) {
+        try {
+          await speakB64(simliRef.current, result.audio_b64)
+        } catch (err) {
+          console.error('simli speak failed', err)
+          setError('The avatar could not speak that, but your request was still sent.')
+        }
+      }
+      return
+    }
+    if (!handle) throw new Error('avatar not connected')
     const result = await tabletTurn(handle, room, transcript, lang)
     // Tickets land regardless of whether the avatar voiced the reply.
     if (result.tickets.length === 0 && result.reply) {
@@ -537,21 +638,34 @@ export function Tablet() {
     setSentiment(s === 'concern' || s === 'warm' ? s : 'neutral')
 
     // If the stream was stale at speak time, re-handshake and voice the same
-    // reply once more without re-running the brain.
+    // reply once more without re-running the brain. This whole retry is
+    // guarded: by now the tickets are landed and displayed, so a failure here
+    // (D-ID cannot even open a stream when credits run out) downgrades to the
+    // honest message instead of a scary generic error over a successful turn.
     if (!result.spoken && result.reply) {
-      handle = await reconnect()
-      swapArmedRef.current = true
-      const retry = await tabletSpeak(handle, result.reply, result.language)
-      if (!retry.spoken) {
+      try {
+        handle = await reconnect()
+        swapArmedRef.current = true
+        const retry = await tabletSpeak(handle, result.reply, result.language)
+        if (!retry.spoken) {
+          setError('The avatar could not speak that, but your request was still sent.')
+        }
+      } catch (err) {
+        console.error('re-speak failed', err)
         setError('The avatar could not speak that, but your request was still sent.')
       }
     }
   }
 
+  // Whichever provider is live, is the avatar ready to take a turn?
+  function avatarReady(): boolean {
+    return providerRef.current === 'simli' ? !!simliRef.current : !!handleRef.current
+  }
+
   // Text mode: type and Ask. Same flow as before, now via the shared helpers.
   async function send() {
     let handle = handleRef.current
-    if (!handle || !text.trim() || status !== 'live' || recording) return
+    if (!avatarReady() || !text.trim() || status !== 'live' || recording) return
     clearIdleTimer()
     setStatus('thinking')
     setError('')
@@ -575,7 +689,7 @@ export function Tablet() {
   // (one motion), and let the detected language drive the reply.
   async function sendVoice(blob: Blob) {
     let handle = handleRef.current
-    if (!handle || status === 'thinking') return
+    if (!avatarReady() || status === 'thinking') return
     setStatus('thinking')
     setError('')
     setCaption('')
@@ -747,6 +861,10 @@ export function Tablet() {
         <div className="avatar-stage">
           <div className="avatar-tile">
             <video ref={videoRef} className="avatar-video" playsInline autoPlay />
+            {/* Simli's synced reply audio plays through this hidden element.
+                Unused (and silent) on the D-ID path, where audio rides the
+                video track. */}
+            <audio ref={audioElRef} autoPlay style={{ display: 'none' }} />
             {/* The host photo covers the tile from before wake until REAL speech
                 starts (audioLive), the resting host (dimmed) before wake, then the
                 still face through connect AND the ~3s warmup wait, so the guest
@@ -872,7 +990,7 @@ export function Tablet() {
       </div>
 
       <footer className="listening-footer">
-        Big Bros 2026 · Powered by D-ID and ElevenLabs
+        Big Bros 2026 · Powered by {provider === 'simli' ? 'Simli' : 'D-ID'} and ElevenLabs
       </footer>
     </div>
   )

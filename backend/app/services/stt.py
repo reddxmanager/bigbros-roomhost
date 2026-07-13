@@ -11,10 +11,38 @@ import httpx
 ELEVENLABS_STT_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 SCRIBE_MODEL = "scribe_v1"
 
-# Scribe returns an ISO-639-3 language_code (e.g. "eng", "kor"). Map the ones we
-# voice to the two-letter codes the pipeline override, TTS, and ack already use.
-# Anything else falls back to its first two letters, then to English.
-_LANG_MAP = {"eng": "en", "kor": "ko"}
+# Scribe returns an ISO-639-3 language_code (e.g. "eng", "kor", "fil"). Map the
+# codes we plausibly see to the two-letter tags the pipeline override, TTS, and
+# ack already use. ISO-639-3 -> ISO-639-1 is NOT a prefix chop: taking the first
+# two letters collides, e.g. "fil" (Filipino/Tagalog) -> "fi", which is Finnish.
+# So map explicitly; unmapped codes pass through verbatim (see _to_lang).
+_LANG_MAP = {
+    "eng": "en",
+    "kor": "ko",
+    "fil": "tl",  # Filipino
+    "tgl": "tl",  # Tagalog
+    "spa": "es",
+    "jpn": "ja",
+    "cmn": "zh",  # Mandarin
+    "zho": "zh",  # Chinese (macrolanguage)
+    "fra": "fr",
+    "deu": "de",
+}
+
+
+def _to_lang(code: str) -> str:
+    """Resolve a Scribe language_code to the tag the pipeline/TTS/brain use.
+
+    Known codes map to their ISO-639-1 two-letter form. An UNKNOWN code passes
+    through verbatim, never truncated: the first-two-letters chop is exactly what
+    produced the fil -> fi (Finnish) collision. The full ISO-639-3 code is safe
+    downstream because the brain (Claude) reads ISO-639-3 directly and TTS
+    (eleven_multilingual_v2) reads the language off the text, not this code.
+    Passing it through preserves the guest's language for anything Scribe can
+    detect; English is the fallback only when there is no detection at all."""
+    if not code:
+        return "en"
+    return _LANG_MAP.get(code, code)
 
 # Scribe annotates non-speech audio events in parentheses or brackets, e.g.
 # "(whistling)", "(cat meowing)", "[laughter]". Strip these so they never reach
@@ -72,5 +100,5 @@ class ElevenLabsScribeSTT:
             data = resp.json()
         text = _strip_non_speech((data.get("text") or "").strip())
         code = (data.get("language_code") or "").lower()
-        language = _LANG_MAP.get(code, code[:2] if code else "en")
+        language = _to_lang(code)
         return text, language

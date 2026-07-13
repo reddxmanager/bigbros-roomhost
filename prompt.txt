@@ -1,0 +1,14 @@
+Step 3: build the staff ops dashboard properly. Re-read sections 7 and 8 of the spec.
+
+Goal: a real, demoable, installable dashboard where tickets land in lanes in real time, styled in the tropical-modern direction.
+
+Build:
+1. Department lanes: kitchen, bar, housekeeping, maintenance, front-desk triage. Tickets stream over the existing WebSocket and sort by priority within a lane (high to top).
+2. THE one animation: a ticket card slides or fades into its lane the instant it arrives. Build it as a single reusable transition. Keep all other motion off. Respect prefers-reduced-motion.
+3. Styling per the aesthetic spec: tropical-modern, ocean teal as the single accent, warm coral for human touches, neutral surfaces, Phosphor icons, no glow, no emojis. Calmer back-of-house register than the guest screen. Each card shows dept, summary, item/qty, priority, tags (including allergy and repeat), status, and is glanceable under pressure.
+4. Make it an installable PWA (manifest plus service worker) so staff add it to a home screen from a URL.
+5. A simple status control per card: open to ack to done.
+
+Constraints: no em dashes. Round any displayed numbers. Same palette as the guest tablet, stripped for speed.
+
+Done = with the real brain from step 2, I type a guest sentence and watch styled tickets animate into the correct lanes on a screen that installs to a phone. Commit.

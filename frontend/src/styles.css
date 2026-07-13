@@ -184,6 +184,42 @@ body {
   text-decoration: line-through;
 }
 
+/* Push: the guest is still waiting on this. The card pulses a soft coral ring
+   (coral is the human touch, the same register as allergy and escalation) for
+   one beat, then settles. Not an alarm and not a glow: a calm, deliberate
+   "someone is asking again." The transient pulse is switched off under the
+   reduced-motion guard; the static .waiting badge below always carries it. */
+.card.pushed {
+  border-left-color: var(--coral);
+  animation: push-pulse 600ms ease-in-out 3;
+}
+@keyframes push-pulse {
+  0%, 100% { box-shadow: var(--shadow); }
+  50% { box-shadow: 0 0 0 3px var(--coral-soft); }
+}
+
+/* Still-waiting badge. Sits at the head of the card, persists between pushes
+   while the ticket stays open or ack. Quiet coral pill, geometric icon. */
+.waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  color: var(--coral);
+  background: var(--coral-soft);
+  border-radius: 20px;
+  padding: 3px 9px;
+  width: fit-content;
+}
+.waiting .waiting-count {
+  font-weight: 700;
+  opacity: 0.85;
+}
+
 .card-top {
   display: flex;
   align-items: center;
@@ -902,4 +938,205 @@ body {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Staff key gate. Calm, matches the dashboard family. */
+.key-gate {
+  max-width: 360px;
+  margin: 18vh auto 0;
+  padding: 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.key-gate h2 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 20px;
+}
+.key-gate p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.key-gate input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 15px;
+  margin-bottom: 12px;
+  background: var(--sand);
+  color: var(--ink);
+}
+.key-gate input:focus {
+  outline: none;
+  border-color: var(--teal);
+}
+.key-gate button {
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--teal);
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+.key-gate button:hover {
+  background: var(--teal-deep);
+}
+
+/* Dashboard toolbar: department filter + guest refresh. Same calm family as
+   the lanes; the board stays the loudest thing on the page. */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px 0;
+}
+.toolbar-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--teal-deep);
+}
+.toolbar select {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+}
+.toolbar .refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--teal-deep);
+  font-size: 13px;
+  cursor: pointer;
+}
+.toolbar .refresh:hover {
+  border-color: var(--teal);
+}
+.toolbar .refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.toolbar .sync-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Single-department view: one wide lane with cards flowing in columns, so a
+   kitchen wall tablet reads as a ticket rail rather than a lonely strip. */
+.board.single {
+  grid-template-columns: 1fr;
+}
+.board.single .lane {
+  min-height: 320px;
+}
+
+/* Compact cards: the quoted guest line and fine detail live behind a tap. */
+.card {
+  cursor: pointer;
+}
+.expand-caret {
+  margin-left: auto;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.card.expanded .expand-caret {
+  transform: rotate(180deg);
+}
+.card-details {
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+/* Websocket health banner. Visible only when something is wrong. */
+.ws-banner {
+  background: var(--coral-soft);
+  color: var(--coral);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.ws-banner.bad {
+  background: var(--coral);
+  color: #fff;
+}
+
+/* Ticket age in the meta line. Quietly present, never shouting. */
+.meta .age {
+  color: var(--muted);
+}
+
+/* History panel: the manager's record of completed work and how fast it moved. */
+.toolbar .refresh.active {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+.history {
+  margin: 12px 20px 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+}
+.history-head {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.history-note {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 6px 0;
+}
+.history table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.history th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--teal-deep);
+  padding: 4px 10px 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.history td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+}
+.history tr:last-child td {
+  border-bottom: none;
+}
+.history .hist-summary {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history tr.cancelled td {
+  color: var(--muted);
+  text-decoration: line-through;
 }

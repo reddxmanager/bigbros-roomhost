@@ -9,9 +9,12 @@ with prompt caching applied."""
 
 import asyncio
 import json
+import logging
 from typing import Any, Protocol
 
 import anthropic
+
+logger = logging.getLogger(__name__)
 
 from ..schema import (
     BrainResult,
@@ -131,6 +134,15 @@ class ClaudeBrain:
             "standing_tags": context.standing_tags,
             "open_requests": open_reqs,
         }
+        # Booking context from KUYA, when the guest sync has run. The raw
+        # special-requests note goes in verbatim: the keyword-derived tags
+        # cover the kitchen autotag, but the note carries everything else
+        # ("ground floor please", "surprise cake at 8") that no keyword
+        # list catches.
+        if context.guest_name:
+            ctx["guest_name"] = context.guest_name
+        if context.notes:
+            ctx["booking_notes"] = context.notes
         return f"GUEST SAID: {text}\n\nCONTEXT:\n{json.dumps(ctx, indent=2)}"
 
     def _parse(self, response: anthropic.types.Message) -> BrainResult:
@@ -138,7 +150,16 @@ class ClaudeBrain:
         clarifications: list[Clarification] = []
         escalations: list[Escalation] = []
         cancellations: list[Cancellation] = []
+        # The spoken reply is built ONLY from guest-facing tool outputs
+        # (answer_guest / request_clarification.question / escalate.guest_message
+        # / cancel_request.guest_message), collected here by _dispatch_tool.
         reply_parts: list[str] = []
+        # Raw text the model emits outside any tool call. This is NOT guest-facing
+        # speech: it is usually the model narrating its reasoning ("the context
+        # says their language is...", "I'll respond in ... per the rule"). Kept
+        # separate so it can never be concatenated into the spoken reply alongside
+        # a real tool reply. Used only as a last-resort fallback below.
+        stray_text: list[str] = []
 
         for block in response.content:
             if block.type == "tool_use":
@@ -152,14 +173,18 @@ class ClaudeBrain:
                     reply_parts=reply_parts,
                 )
             elif block.type == "text" and block.text.strip():
-                # Free text outside tool calls. The spec wants all guest-facing
-                # text routed through answer_guest, but capture stray text as a
-                # fallback so the avatar still has something to say.
-                reply_parts.append(block.text.strip())
+                stray_text.append(block.text.strip())
+
+        reply = " ".join(reply_parts)
+        # Fallback only: if no guest-facing tool produced any reply, fall back to
+        # the stray text so the avatar still has something to say. Never merge the
+        # two: that is what leaked the model's reasoning into the spoken reply.
+        if not reply and stray_text:
+            reply = " ".join(stray_text)
 
         return BrainResult(
             tickets=tickets,
-            reply=" ".join(reply_parts),
+            reply=reply,
             clarifications=clarifications,
             escalations=escalations,
             cancellations=cancellations,
@@ -176,17 +201,25 @@ class ClaudeBrain:
         cancellations: list[Cancellation],
         reply_parts: list[str],
     ) -> None:
-        if name == "create_ticket":
-            tickets.append(TicketDraft(**args))
-        elif name == "answer_guest":
-            reply_parts.append(args["text"])
-        elif name == "request_clarification":
-            clarifications.append(Clarification(**args))
-            reply_parts.append(args["question"])
-        elif name == "escalate":
-            escalations.append(Escalation(**args))
-            reply_parts.append(args["guest_message"])
-        elif name == "cancel_request":
-            cancellations.append(Cancellation(**args))
-            reply_parts.append(args["guest_message"])
-        # Unknown tool name: silently ignore. The schema constrains the model.
+        # Each arm guards its own parse: one malformed tool call from the model
+        # must never 500 the whole turn. A skipped tool is logged and the rest
+        # of the turn (other tickets, the spoken reply) still lands.
+        try:
+            if name == "create_ticket":
+                tickets.append(TicketDraft(**args))
+            elif name == "answer_guest":
+                reply_parts.append(args["text"])
+            elif name == "request_clarification":
+                clarifications.append(Clarification(**args))
+                reply_parts.append(args["question"])
+            elif name == "escalate":
+                escalations.append(Escalation(**args))
+                reply_parts.append(args["guest_message"])
+            elif name == "cancel_request":
+                cancellations.append(Cancellation(**args))
+                reply_parts.append(args["guest_message"])
+            # Unknown tool name: silently ignore. The schema constrains the model.
+        except Exception as exc:
+            logger.error(
+                "Skipping malformed %s tool call args=%r: %s", name, args, exc
+            )

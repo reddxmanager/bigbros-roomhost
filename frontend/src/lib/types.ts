@@ -17,6 +17,14 @@ export interface Ticket {
   tags: string[]
   status: Status
   source_utterance: string
+  // Still-waiting "push" state, mirrored from the backend. nudge_count is how
+  // many times the guest has chased this outstanding ticket through ATE.
+  nudge_count: number
+  last_nudge_at: string | null
+  // Completion-speed stamps: first acknowledge, and terminal closure (done or
+  // cancelled). Optional so older payloads still parse.
+  ack_at?: string | null
+  done_at?: string | null
 }
 
 export interface RoomState {

@@ -1,12 +1,15 @@
 """One guest turn, end to end. Owns: STT, brain, ticket finalization (dedup + autotag),
 broadcast, TTS, avatar. The brain decides; the pipeline enforces invariants from spec section 5."""
 
+import asyncio
 import logging
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from . import db
 from .schema import BrainResult, Cancellation, Escalation, Ticket, TicketDraft, TurnResponse
 from .services.avatar import Avatar
 from .services.brain import Brain
@@ -18,6 +21,18 @@ from .store import store
 logger = logging.getLogger(__name__)
 
 DEDUP_WINDOW_SECONDS = 120
+
+# Quantity sanity cap. "500 beers" is a bored teenager, not an order. Anything
+# above the cap is clamped and tagged verify-qty so staff see "12 (verify)"
+# and confirm with the room instead of trusting the number.
+MAX_SANE_QTY = 12
+
+# What the avatar says when the brain fails twice in a row. Content-free and
+# honest: no fake ticket confirmations for work that never happened.
+FALLBACK_REPLY = {
+    "en": "Sorry, I had a little trouble there. Could you say that again?",
+    "ko": "죄송해요, 잠깐 문제가 있었어요. 다시 한 번 말씀해 주시겠어요?",
+}
 
 # Words to ignore when the cancellation falls back to token overlap, so common
 # filler in a phrase like "the rice order" does not match unrelated tickets.
@@ -65,7 +80,26 @@ class Pipeline:
         # Feed the brain the effective language without mutating stored room
         # state, so the reply text comes back in the right language per turn.
         brain_context = room_state.model_copy(update={"language": effective_language})
-        result: BrainResult = await self.brain.decide(transcript, brain_context)
+
+        # The brain call is the turn's single point of failure, so it gets one
+        # retry and then a graceful spoken fallback. A guest hearing "could you
+        # say that again" is a hiccup; a guest hearing nothing from a talking
+        # face is a broken product.
+        turn_started = time.monotonic()
+        brain_error: Optional[str] = None
+        try:
+            result: BrainResult = await self.brain.decide(transcript, brain_context)
+        except Exception as first_exc:
+            logger.warning("Brain call failed, retrying once: %s", first_exc)
+            await asyncio.sleep(0.5)
+            try:
+                result = await self.brain.decide(transcript, brain_context)
+            except Exception as second_exc:
+                logger.error("Brain call failed twice, using fallback: %s", second_exc)
+                brain_error = f"{type(second_exc).__name__}: {second_exc}"
+                result = BrainResult(
+                    reply=FALLBACK_REPLY.get(effective_language, FALLBACK_REPLY["en"])
+                )
 
         finalized: list[Ticket] = []
         now = datetime.now(timezone.utc)
@@ -80,14 +114,32 @@ class Pipeline:
                     if a not in tags:
                         tags.append(a)
 
+            # Quantity sanity (invariant, so it lives here, not in the prompt).
+            qty = draft.qty
+            if qty is not None and qty > MAX_SANE_QTY:
+                logger.warning(
+                    "Clamping absurd qty %s -> %s for %r (room %s)",
+                    qty, MAX_SANE_QTY, draft.summary, room,
+                )
+                qty = MAX_SANE_QTY
+                if "verify-qty" not in tags:
+                    tags.append("verify-qty")
+
             existing = self._find_dup(room_state, draft, now)
             if existing is not None:
+                # The guest is chasing an outstanding request through ATE. This is
+                # the only way a guest can fire a push: never directly at staff,
+                # always mediated by the agent. Bump the still-waiting state and
+                # broadcast reason="push" so the dashboard pulses and chimes.
                 if "repeat" not in existing.tags:
                     existing.tags.append("repeat")
+                existing.nudge_count += 1
+                existing.last_nudge_at = now
+                store.persist_ticket(existing)
                 await store.broadcast({
                     "type": "ticket.updated",
                     "ticket": existing.model_dump(mode="json"),
-                    "reason": "nudge",
+                    "reason": "push",
                 })
                 continue
 
@@ -99,7 +151,7 @@ class Pipeline:
                 dept=draft.dept,
                 summary=draft.summary,
                 item=draft.item,
-                qty=draft.qty,
+                qty=qty,
                 priority=draft.priority,
                 tags=tags,
                 status="open",
@@ -139,7 +191,10 @@ class Pipeline:
             if target is None:
                 continue
             target.status = "cancelled"
+            if target.done_at is None:
+                target.done_at = now
             target.tags = list(target.tags) + (["cancelled"] if "cancelled" not in target.tags else [])
+            store.persist_ticket(target)
             await store.broadcast({
                 "type": "ticket.updated",
                 "ticket": target.model_dump(mode="json"),
@@ -150,6 +205,27 @@ class Pipeline:
 
         audio = await self.tts.speak(result.reply, effective_language)
         await self.avatar.render(audio)
+
+        # The turn log: audit trail, debugging record, and future daily digest.
+        # last_usage exists on the real brain only; mocks simply log no tokens.
+        latency_ms = int((time.monotonic() - turn_started) * 1000)
+        usage = getattr(self.brain, "last_usage", None) or {}
+        db.log_turn(
+            room=room,
+            utterance=text,
+            reply=result.reply,
+            language=effective_language,
+            tickets=len(finalized),
+            latency_ms=latency_ms,
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            error=brain_error,
+        )
+        logger.info(
+            "turn room=%s tickets=%d latency_ms=%d lang=%s%s",
+            room, len(finalized), latency_ms, effective_language,
+            " ERROR=" + brain_error if brain_error else "",
+        )
 
         return TurnResponse(
             reply=result.reply,
@@ -174,6 +250,12 @@ class Pipeline:
         return "neutral"
 
     def _find_dup(self, room_state, draft: TicketDraft, now: datetime) -> Optional[Ticket]:
+        """Match a new draft against an outstanding ticket for this room. Any
+        open or ack ticket with the same dept and summary counts as the same
+        request, with no time window: re-asking ten minutes later is still the
+        guest chasing the same thing, so we push the existing ticket rather than
+        duplicate it. Done and cancelled tickets never match. (now is unused now
+        that the window is gone, kept for call-site stability.)"""
         for t in room_state.open_requests:
             if t.dept != draft.dept:
                 continue
@@ -181,9 +263,7 @@ class Pipeline:
                 continue
             if t.status not in ("open", "ack"):
                 continue
-            age = (now - t.created_at).total_seconds()
-            if age <= DEDUP_WINDOW_SECONDS:
-                return t
+            return t
         return None
 
     def _resolve_cancellation(self, room_state, cancel: Cancellation) -> Optional[Ticket]:

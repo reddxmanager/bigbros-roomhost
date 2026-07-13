@@ -26,6 +26,18 @@ class Ticket(BaseModel):
     tags: list[str] = Field(default_factory=list)
     status: Status = "open"
     source_utterance: str
+    # Still-waiting "push" state. A push is never the guest poking staff directly:
+    # it is fired by ATE when the guest re-asks about an outstanding ticket, or by
+    # the staleness timer when an open ticket sits too long. nudge_count is how many
+    # times the guest has chased this, last_nudge_at when the latest push fired.
+    nudge_count: int = 0
+    last_nudge_at: Optional[datetime] = None
+    # Completion-speed tracking. ack_at stamps the first acknowledge; done_at
+    # stamps terminal closure (done OR cancelled, one column on purpose, so
+    # history can sort every closed ticket by one field). created->ack->done
+    # is the metric managers actually manage.
+    ack_at: Optional[datetime] = None
+    done_at: Optional[datetime] = None
 
 
 class TicketDraft(BaseModel):
@@ -40,13 +52,21 @@ class TicketDraft(BaseModel):
 
 
 class RoomState(BaseModel):
-    """Per-room standing context plus the live list of open tickets for dedup."""
+    """Per-room standing context plus the live list of open tickets for dedup.
+
+    guest_name and notes arrive from KUYA's booking data via the guest sync
+    (see services/kuya.py): notes is the raw special-requests text the guest
+    typed at booking, passed to the brain verbatim; standing_tags carries the
+    tags derived from it (allergy:x, occasion:y) that drive the autotag."""
 
     room: str
     suite_name: str
     language: str
     standing_tags: list[str] = Field(default_factory=list)
     open_requests: list[Ticket] = Field(default_factory=list)
+    guest_name: Optional[str] = None
+    notes: Optional[str] = None
+    occupied: bool = True
 
 
 class Clarification(BaseModel):

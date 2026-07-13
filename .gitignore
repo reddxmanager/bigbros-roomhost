@@ -24,3 +24,6 @@ Thumbs.db
 
 # Claude Code local state
 .claude/
+
+# Persisted state (SQLite)
+backend/data/
